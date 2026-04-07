@@ -17,7 +17,6 @@ from datetime import datetime
 
 from src.tasks.humaneval import HumanEvalTask
 from src.models.hf_model import HFModel
-from src.utils.prompting import extract_code
 from src.evaluation.executor import execute_code
 from src.evaluation.metrics import summarize_results
 from src.utils.io import save_result, save_results_jsonl
@@ -64,7 +63,11 @@ def extract_full_function_code(raw_output: str, entry_point: str, fallback_promp
 
     # fallback
     if not function_block:
-        return fallback_prompt + text
+        # 붕괴 출력 방지: 너무 짧거나 code-like 하지 않으면 빈 코드로 반환
+        stripped = text.strip()
+        if len(stripped) < 20 or stripped in {"s", "p"}:
+            return fallback_prompt
+        return fallback_prompt + "\n" + stripped
 
     # 최종 조합: imports + function
     final_code = "\n".join(imports + [""] + function_block).rstrip() + "\n"
@@ -115,45 +118,49 @@ def get_status(exec_result) -> str:
 
 def build_planner_prompt(task_prompt: str) -> str:
     """문제 해결 계획만 생성하도록 유도하는 planner prompt."""
-    return f"""You are a planning assistant for Python programming problems.
+    return f"""You are planning a Python solution.
 
-Given the task prompt, write a short implementation plan.
-
-Requirements:
-- Do NOT write code.
-- Explain the intended algorithm briefly.
-- Mention important edge cases or constraints.
-- Keep it concise and structured.
-
-[Task Prompt]
+Task:
 {task_prompt}
 
-[Implementation Plan]
+Write a very short plan.
+
+Rules:
+- Do NOT write code.
+- Use at most 3 bullet points.
+- Do NOT introduce helper functions unless absolutely necessary.
+- Do NOT introduce new variable names beyond those implied by the task.
+- Do NOT add assumptions not stated in the task.
+- Focus only on the core algorithm.
+
+Plan:
 """
 
 
 def build_coder_prompt(task_prompt: str, planner_output: str) -> str:
     """planner의 계획을 바탕으로 코드만 생성하도록 유도하는 coder prompt."""
-    return f"""You are a Python coding assistant.
+    return f"""You are writing Python code.
 
-Write a complete Python solution for the following task.
-
-Requirements:
-- Use the task prompt and the implementation plan.
-- Return only Python code.
-- Do not include markdown fences.
-- Do not include explanation.
-- Keep the exact function name and signature from the task prompt.
-
-[Task Prompt]
+Task:
 {task_prompt}
 
-[Implementation Plan]
+Plan:
 {planner_output}
 
-[Code]
-"""
+Write only the final Python code.
 
+Rules:
+- Output only code.
+- Do not include markdown fences.
+- Do not include explanations.
+- Do not include any stray text such as single letters or comments outside the code.
+- Keep the exact target function name and signature from the task.
+- Do not introduce helper functions unless they are fully defined in the output.
+- Do not use variables that are not defined in the function body or function signature.
+- If imports are needed, include them explicitly.
+
+Code:
+"""
 
 def run_planner_coder(config_path: str):
     """planner-coder baseline 실험 실행."""

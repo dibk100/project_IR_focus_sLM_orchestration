@@ -1,6 +1,8 @@
 """
 Simple Repair Loop Orchestration
 
+[code 생성] → [execute (test)] → [error message] → [fix]
+
 흐름:
 1. task 읽기
 2. initial generation
