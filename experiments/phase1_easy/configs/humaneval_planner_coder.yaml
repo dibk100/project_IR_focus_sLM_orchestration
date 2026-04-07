@@ -13,5 +13,5 @@ coder_model:
   max_new_tokens: 512
   temperature: 0.0
 
-num_samples: 10
+num_samples: 164
 output_dir: "results/phase1_easy/planner_coder"
