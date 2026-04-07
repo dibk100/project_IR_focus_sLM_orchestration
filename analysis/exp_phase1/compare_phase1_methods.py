@@ -1,7 +1,9 @@
-# python analysis/compare_phase1_methods.py \
+# python analysis/exp_phase1/compare_phase1_methods.py \
 #   results/phase1_easy/single/details.jsonl \
+#   results/phase1_easy/refinement/details.jsonl \
 #   results/phase1_easy/repair/details.jsonl \
-#   results/phase1_easy/planner_coder/details.jsonl
+#   results/phase1_easy/planner_coder/details.jsonl \
+#   results/phase1_easy/verification/details.jsonl
 
 import json
 import argparse
@@ -45,8 +47,8 @@ def build_single_final_rows(single_rows):
     return final_rows
 
 
-def build_repair_final_rows(repair_rows):
-    grouped = group_by_task(repair_rows)
+def build_iterative_final_rows(rows, method_name):
+    grouped = group_by_task(rows)
     final_rows = []
 
     for task_id, attempts in grouped.items():
@@ -61,7 +63,7 @@ def build_repair_final_rows(repair_rows):
 
         final_rows.append({
             "task_id": task_id,
-            "method": "repair",
+            "method": method_name,
             "initial_status": first["status"],
             "initial_error_type": first["error_type"],
             "final_status": last["status"],
@@ -93,6 +95,30 @@ def build_planner_final_rows(planner_rows):
             "solved_on_attempt": 0 if r["status"] == "pass" else None,
             "num_attempts": 1,
             "latency_sec_sum": r.get("latency_sec"),
+        })
+    return final_rows
+
+
+def build_verification_generation_rows(verification_rows):
+    """
+    verification 실험의 'generation 성능'만 다른 방법과 비교 가능하도록 정리
+    """
+    final_rows = []
+    for r in verification_rows:
+        final_rows.append({
+            "task_id": r["task_id"],
+            "method": "verification_gen",
+            "initial_status": r["status"],
+            "initial_error_type": r["error_type"],
+            "final_status": r["status"],
+            "final_error_type": r["error_type"],
+            "passed": r["status"] == "pass",
+            "timeout": r["status"] == "timeout",
+            "solved_on_attempt": 0 if r["status"] == "pass" else None,
+            "num_attempts": 1,
+            "latency_sec_sum": r.get("latency_sec"),
+            "verifier_correct": r.get("verifier_correct"),
+            "verifier_verdict": r.get("verifier_verdict"),
         })
     return final_rows
 
@@ -141,51 +167,98 @@ def print_method_summary(method_name, summary):
         print("  (none)")
 
 
-def compare_gain(single_rows, repair_rows, planner_rows):
+def compare_gain(single_rows, target_rows, target_name):
     single_map = {r["task_id"]: r for r in single_rows}
-    repair_map = {r["task_id"]: r for r in repair_rows}
-    planner_map = {r["task_id"]: r for r in planner_rows}
+    target_map = {r["task_id"]: r for r in target_rows}
 
-    repair_gain = []
-    planner_gain = []
-    repair_only = []
-    planner_only = []
-    both_gain = []
-
+    gain = []
     for task_id, s in single_map.items():
-        s_pass = s["passed"]
-        r_pass = repair_map.get(task_id, {}).get("passed", False)
-        p_pass = planner_map.get(task_id, {}).get("passed", False)
-
-        if not s_pass and r_pass:
-            repair_gain.append(task_id)
-        if not s_pass and p_pass:
-            planner_gain.append(task_id)
-
-        if not s_pass and r_pass and p_pass:
-            both_gain.append(task_id)
-        elif not s_pass and r_pass and not p_pass:
-            repair_only.append(task_id)
-        elif not s_pass and p_pass and not r_pass:
-            planner_only.append(task_id)
+        t = target_map.get(task_id)
+        if t is None:
+            continue
+        if (not s["passed"]) and t["passed"]:
+            gain.append(task_id)
 
     print("\n" + "=" * 60)
-    print("Gain vs Single")
-    print(f"Repair gain cases: {len(repair_gain)}")
-    print(f"Planner-coder gain cases: {len(planner_gain)}")
-    print(f"Both gain: {len(both_gain)}")
-    print(f"Repair-only gain: {len(repair_only)}")
-    print(f"Planner-only gain: {len(planner_only)}")
+    print(f"Gain vs Single: {target_name}")
+    print(f"Gain cases: {len(gain)}")
+    print("Sample gain tasks:", gain[:10])
 
-    print("\nSample Repair-only gain tasks:", repair_only[:10])
-    print("Sample Planner-only gain tasks:", planner_only[:10])
-    print("Sample Both-gain tasks:", both_gain[:10])
+    return set(gain)
 
 
-def print_task_examples(single_rows, repair_rows, planner_rows, limit=10):
+def print_overlap(single_rows, refinement_rows, repair_rows, planner_rows):
     single_map = {r["task_id"]: r for r in single_rows}
+    refinement_map = {r["task_id"]: r for r in refinement_rows}
     repair_map = {r["task_id"]: r for r in repair_rows}
     planner_map = {r["task_id"]: r for r in planner_rows}
+
+    refinement_gain = set()
+    repair_gain = set()
+    planner_gain = set()
+
+    for task_id, s in single_map.items():
+        if (not s["passed"]) and refinement_map.get(task_id, {}).get("passed", False):
+            refinement_gain.add(task_id)
+        if (not s["passed"]) and repair_map.get(task_id, {}).get("passed", False):
+            repair_gain.add(task_id)
+        if (not s["passed"]) and planner_map.get(task_id, {}).get("passed", False):
+            planner_gain.add(task_id)
+
+    print("\n" + "=" * 60)
+    print("Gain Overlap (vs Single)")
+    print(f"Refinement gain: {len(refinement_gain)}")
+    print(f"Repair gain: {len(repair_gain)}")
+    print(f"Planner gain: {len(planner_gain)}")
+
+    print(f"\nRefinement-only gain: {len(refinement_gain - repair_gain - planner_gain)}")
+    print(f"Repair-only gain: {len(repair_gain - refinement_gain - planner_gain)}")
+    print(f"Planner-only gain: {len(planner_gain - refinement_gain - repair_gain)}")
+
+    print(f"\nRefinement ∩ Repair: {len(refinement_gain & repair_gain)}")
+    print(f"Refinement ∩ Planner: {len(refinement_gain & planner_gain)}")
+    print(f"Repair ∩ Planner: {len(repair_gain & planner_gain)}")
+    print(f"All three: {len(refinement_gain & repair_gain & planner_gain)}")
+
+    print("\nSample Planner-only gain tasks:", sorted(list(planner_gain - refinement_gain - repair_gain))[:10])
+    print("Sample Repair-only gain tasks:", sorted(list(repair_gain - refinement_gain - planner_gain))[:10])
+    print("Sample Refinement-only gain tasks:", sorted(list(refinement_gain - repair_gain - planner_gain))[:10])
+
+
+def print_verification_summary(verification_rows):
+    total = len(verification_rows)
+    verifier_correct = sum(1 for r in verification_rows if r.get("verifier_correct") is True)
+    verifier_accuracy = verifier_correct / total if total > 0 else 0.0
+
+    tp = fp = tn = fn = 0
+    for r in verification_rows:
+        gt_pass = r["passed"]
+        pred_pass = r.get("verifier_verdict") == "PASS"
+
+        if gt_pass and pred_pass:
+            tp += 1
+        elif (not gt_pass) and pred_pass:
+            fp += 1
+        elif (not gt_pass) and (not pred_pass):
+            tn += 1
+        elif gt_pass and (not pred_pass):
+            fn += 1
+
+    print("\n" + "=" * 60)
+    print("Verification Primitive Summary")
+    print(f"Verifier Accuracy: {verifier_accuracy:.4f}")
+    print(f"TP: {tp}")
+    print(f"FP: {fp}")
+    print(f"TN: {tn}")
+    print(f"FN: {fn}")
+
+
+def print_task_examples(single_rows, refinement_rows, repair_rows, planner_rows, verification_rows, limit=10):
+    single_map = {r["task_id"]: r for r in single_rows}
+    refinement_map = {r["task_id"]: r for r in refinement_rows}
+    repair_map = {r["task_id"]: r for r in repair_rows}
+    planner_map = {r["task_id"]: r for r in planner_rows}
+    verification_map = {r["task_id"]: r for r in verification_rows}
 
     print("\n" + "=" * 60)
     print(f"Task-level Comparison Samples (up to {limit})")
@@ -193,14 +266,21 @@ def print_task_examples(single_rows, repair_rows, planner_rows, limit=10):
     shown = 0
     for task_id in sorted(single_map.keys()):
         s = single_map[task_id]
-        r = repair_map.get(task_id)
+        rf = refinement_map.get(task_id)
+        rp = repair_map.get(task_id)
         p = planner_map.get(task_id)
+        v = verification_map.get(task_id)
 
         print("-" * 60)
         print(f"Task: {task_id}")
-        print(f"  single         : {s['final_status']} ({s['final_error_type']})")
-        print(f"  repair         : {r['final_status']} ({r['final_error_type']})")
-        print(f"  planner_coder  : {p['final_status']} ({p['final_error_type']})")
+        print(f"  single           : {s['final_status']} ({s['final_error_type']})")
+        print(f"  refinement       : {rf['final_status']} ({rf['final_error_type']})")
+        print(f"  repair           : {rp['final_status']} ({rp['final_error_type']})")
+        print(f"  planner_coder    : {p['final_status']} ({p['final_error_type']})")
+        print(
+            f"  verification_gen : {v['final_status']} ({v['final_error_type']}) | "
+            f"verdict={v.get('verifier_verdict')}"
+        )
 
         shown += 1
         if shown >= limit:
@@ -210,33 +290,57 @@ def print_task_examples(single_rows, repair_rows, planner_rows, limit=10):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("single_path", type=str)
+    parser.add_argument("refinement_path", type=str)
     parser.add_argument("repair_path", type=str)
     parser.add_argument("planner_path", type=str)
+    parser.add_argument("verification_path", type=str)
     args = parser.parse_args()
 
     single_raw = load_jsonl(args.single_path)
+    refinement_raw = load_jsonl(args.refinement_path)
     repair_raw = load_jsonl(args.repair_path)
     planner_raw = load_jsonl(args.planner_path)
+    verification_raw = load_jsonl(args.verification_path)
 
     single_final = build_single_final_rows(single_raw)
-    repair_final = build_repair_final_rows(repair_raw)
+    refinement_final = build_iterative_final_rows(refinement_raw, "refinement")
+    repair_final = build_iterative_final_rows(repair_raw, "repair")
     planner_final = build_planner_final_rows(planner_raw)
+    verification_final = build_verification_generation_rows(verification_raw)
 
     print("📂 Input Files")
-    print(f"  single        : {args.single_path}")
-    print(f"  repair        : {args.repair_path}")
-    print(f"  planner_coder : {args.planner_path}")
+    print(f"  single          : {args.single_path}")
+    print(f"  refinement      : {args.refinement_path}")
+    print(f"  repair          : {args.repair_path}")
+    print(f"  planner_coder   : {args.planner_path}")
+    print(f"  verification    : {args.verification_path}")
 
     single_summary = summarize_method(single_final)
+    refinement_summary = summarize_method(refinement_final)
     repair_summary = summarize_method(repair_final)
     planner_summary = summarize_method(planner_final)
+    verification_summary = summarize_method(verification_final)
 
     print_method_summary("single", single_summary)
+    print_method_summary("refinement", refinement_summary)
     print_method_summary("repair", repair_summary)
     print_method_summary("planner_coder", planner_summary)
+    print_method_summary("verification_gen", verification_summary)
 
-    compare_gain(single_final, repair_final, planner_final)
-    print_task_examples(single_final, repair_final, planner_final, limit=10)
+    compare_gain(single_final, refinement_final, "refinement")
+    compare_gain(single_final, repair_final, "repair")
+    compare_gain(single_final, planner_final, "planner_coder")
+
+    print_overlap(single_final, refinement_final, repair_final, planner_final)
+    print_verification_summary(verification_raw)
+    print_task_examples(
+        single_final,
+        refinement_final,
+        repair_final,
+        planner_final,
+        verification_final,
+        limit=10,
+    )
 
 
 if __name__ == "__main__":

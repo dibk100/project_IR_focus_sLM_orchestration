@@ -1,4 +1,4 @@
-# python analysis/deep_dive_planner_coder.py \
+# python analysis/exp_phase1/deep_dive_planner_coder.py \
 #   results/phase1_easy/single/details.jsonl \
 #   results/phase1_easy/repair/details.jsonl \
 #   results/phase1_easy/planner_coder/details.jsonl

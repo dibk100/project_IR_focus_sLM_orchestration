@@ -1,4 +1,4 @@
-# python analysis/analyze_phase1_single.py results/phase1_easy/single/details.jsonl
+# python analysis/exp_phase1/analyze_phase1_single.py results/phase1_easy/single/details.jsonl
 import json
 import argparse
 from collections import Counter

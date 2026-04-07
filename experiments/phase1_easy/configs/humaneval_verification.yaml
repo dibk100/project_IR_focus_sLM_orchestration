@@ -1,0 +1,17 @@
+# Phase 1: HumanEval Verification-Only
+# 사용법: PYTHONPATH=. python -m src.orchestration.verification experiments/phase1_easy/configs/humaneval_verification.yaml
+
+dataset: "humaneval"
+
+generator_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.0
+
+verifier_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 128
+  temperature: 0.0
+
+num_samples: 164
+output_dir: "results/phase1_easy/verification"
