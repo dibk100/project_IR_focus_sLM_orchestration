@@ -1,0 +1,29 @@
+{
+  "experiment": {
+    "phase": "phase1_easy",
+    "orchestration": "verification-only",
+    "task": "humaneval",
+    "timestamp": "20260407_163807",
+    "config_path": "experiments/phase1_easy/configs/humaneval_verification.yaml"
+  },
+  "generator_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 512,
+    "temperature": 0.0
+  },
+  "verifier_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 128,
+    "temperature": 0.0
+  },
+  "summary": {
+    "total": 164,
+    "passed": 118,
+    "failed": 46,
+    "timed_out": 0,
+    "pass@1": 0.7195121951219512
+  },
+  "verification": {
+    "verifier_accuracy": 0.8048780487804879
+  }
+}
