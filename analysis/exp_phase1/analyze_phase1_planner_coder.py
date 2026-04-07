@@ -1,4 +1,4 @@
-# python analysis/analyze_phase1_planner_coder.py results/phase1_easy/planner_coder/details.jsonl
+# python analysis/exp_phase1/analyze_phase1_planner_coder.py results/phase1_easy/planner_coder/details.jsonl
 import json
 import argparse
 from collections import Counter

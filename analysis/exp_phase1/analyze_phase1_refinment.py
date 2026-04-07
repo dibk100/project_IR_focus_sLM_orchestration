@@ -1,4 +1,4 @@
-# python analysis/exp_phase1/analyze_phase1_repair.py results/phase1_easy/repair/details.jsonl
+# python analysis/exp_phase1/analyze_phase1_refinment.py results/phase1_easy/refinement/details.jsonl
 import json
 import argparse
 from collections import Counter, defaultdict
@@ -31,7 +31,7 @@ def summarize_task_level(grouped):
     final_fail = 0
 
     solved_on_attempt = Counter()
-    repair_gain = 0
+    refinement_gain = 0
 
     for task_id, attempts in grouped.items():
         first = attempts[0]
@@ -55,9 +55,9 @@ def summarize_task_level(grouped):
         if first_success_attempt is not None:
             solved_on_attempt[first_success_attempt] += 1
 
-        # repaired cases: initial fail -> final pass
+        # refinement gain: initial fail -> final pass
         if first["status"] != "pass" and last["status"] == "pass":
-            repair_gain += 1
+            refinement_gain += 1
 
     return {
         "total": total,
@@ -66,7 +66,7 @@ def summarize_task_level(grouped):
         "final_timeout": final_timeout,
         "final_success_rate": final_pass / total if total > 0 else 0.0,
         "solved_on_attempt": solved_on_attempt,
-        "repair_gain": repair_gain,
+        "refinement_gain": refinement_gain,
     }
 
 
@@ -112,7 +112,7 @@ def print_task_level_summary(task_summary):
     print(f"Final Fail: {task_summary['final_fail']}")
     print(f"Final Timeout: {task_summary['final_timeout']}")
     print(f"Final Success Rate: {task_summary['final_success_rate']:.4f}")
-    print(f"Repair Gain (initial fail -> final pass): {task_summary['repair_gain']}")
+    print(f"Refinement Gain (initial fail -> final pass): {task_summary['refinement_gain']}")
 
     print("\n🎯 Solved on Attempt")
     for attempt_idx, count in sorted(task_summary["solved_on_attempt"].items()):
@@ -144,9 +144,9 @@ def print_attempt_level_summary(attempt_summary):
             print("  (none)")
 
 
-def print_sample_repaired_cases(grouped, limit=3):
+def print_sample_refined_cases(grouped, limit=3):
     print("\n" + "=" * 60)
-    print(f"🔧 Sample Repaired Cases (up to {limit})")
+    print(f"🛠 Sample Refined Cases (up to {limit})")
 
     shown = 0
     for task_id, attempts in grouped.items():
@@ -165,12 +165,12 @@ def print_sample_repaired_cases(grouped, limit=3):
                 break
 
     if shown == 0:
-        print("No repaired cases found.")
+        print("No refined cases found.")
 
 
-def print_sample_unrepaired_cases(grouped, limit=3):
+def print_sample_unrefined_cases(grouped, limit=3):
     print("\n" + "=" * 60)
-    print(f"❌ Sample Unrepaired Cases (up to {limit})")
+    print(f"❌ Sample Unrefined Cases (up to {limit})")
 
     shown = 0
     for task_id, attempts in grouped.items():
@@ -199,8 +199,8 @@ def main():
         "path",
         type=str,
         nargs="?",
-        default="results/phase1_easy/repair/details.jsonl",
-        help="Path to repair details.jsonl",
+        default="results/phase1_easy/refinement/details.jsonl",
+        help="Path to refinement details.jsonl",
     )
     args = parser.parse_args()
 
@@ -216,8 +216,8 @@ def main():
 
     print_task_level_summary(task_summary)
     print_attempt_level_summary(attempt_summary)
-    print_sample_repaired_cases(grouped, limit=3)
-    print_sample_unrepaired_cases(grouped, limit=3)
+    print_sample_refined_cases(grouped, limit=3)
+    print_sample_unrefined_cases(grouped, limit=3)
 
 
 if __name__ == "__main__":
