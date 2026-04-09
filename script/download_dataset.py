@@ -33,8 +33,8 @@ DATASET_REGISTRY = {
         "save_name": "mbpp_pro.jsonl",
     },
     "mbpp": {
-        "hf_name": "google-research-datasets/mbpp",             # https://huggingface.co/datasets/google-research-datasets/mbpp
-        "split": "train",                                       # https://modulabs.notion.site/MBPP-EvalPlus-0-shot-1af5c8e5427d8021b408edd12624bf07
+        "hf_name": "google-research-datasets/mbpp",             
+        "split": "train",                                       
         "save_name": "mbpp.jsonl",
     },
     "codecontests": {
