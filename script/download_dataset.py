@@ -32,6 +32,21 @@ DATASET_REGISTRY = {
         "split": "train",
         "save_name": "mbpp_pro.jsonl",
     },
+    "mbpp": {
+        "hf_name": "google-research-datasets/mbpp",             # https://huggingface.co/datasets/google-research-datasets/mbpp
+        "split": "train",                                       # https://modulabs.notion.site/MBPP-EvalPlus-0-shot-1af5c8e5427d8021b408edd12624bf07
+        "save_name": "mbpp.jsonl",
+    },
+    "codecontests": {
+        "hf_name": "deepmind/code_contests",
+        "split": "valid",
+        "save_name": "codecontests.jsonl",
+    },
+    "swebench_lite": {
+        "hf_name": "princeton-nlp/SWE-bench_Lite",
+        "split": "test",
+        "save_name": "swebench_lite.jsonl",
+    },
 }
 
 
