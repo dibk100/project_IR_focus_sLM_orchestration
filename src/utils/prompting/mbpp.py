@@ -6,51 +6,50 @@ MBPP 전용 프롬프트 및 코드 추출 유틸리티
 
 from src.tasks.mbpp import MBPPSample
 from .common import strip_code_fence
+import re
+
 
 def build_mbpp_prompt(sample: MBPPSample) -> str:
-    """
-    MBPP는 자연어 문제 설명을 바탕으로
-    실행 가능한 전체 Python 코드를 생성하도록 유도한다.
+    test_hint = sample.test_list[0] if sample.test_list else ""
 
-    중요:
-    - 설명 금지
-    - markdown fence 금지
-    - placeholder 금지
-    - 필요한 helper class / helper function 포함
-    """
     return (
-        "You are a Python programmer.\n"
-        "Write a complete Python solution for the following problem.\n"
-        "Output only executable Python code.\n"
-        "Do not include any explanation, markdown fences, examples, or comments like 'Your code here'.\n"
-        "Your code must include all necessary definitions such as helper functions or classes.\n"
-        "Do not leave the function body empty.\n\n"
-        f"Problem:\n{sample.problem_text}\n"
+        "Write Python code only.\n"
+        "Solve the problem below.\n"
+        "Use the exact function name and arguments required by the test.\n"
+        "Include any needed helper classes or functions.\n\n"
+        f"Problem:\n{sample.problem_text}\n\n"
+        f"Test hint:\n{test_hint}\n"
     )
 
 
 def extract_mbpp_code(raw_output: str) -> str:
     """
-    MBPP는 모델이 전체 코드를 생성해야 하므로
-    generation 자체를 정리해서 그대로 사용한다.
+    MBPP 모델 출력에서 실행 가능한 코드만 추출한다.
+
+    전략:
+    1. fenced code block이 여러 개 있으면 마지막 block 사용
+    2. fenced block이 없으면 def/class부터 시작하는 코드 추출
+    3. 그래도 없으면 fence 제거 후 반환
     """
-    return strip_code_fence(raw_output)
+    text = raw_output.strip()
 
-# 좀 더 단순한 프롬프트
-# def build_mbpp_prompt(sample: MBPPSample) -> str:
-#     """
-#     MBPP는 자연어 문제 설명을 바탕으로
-#     실행 가능한 전체 Python 코드를 생성하도록 유도한다.
+    # 1) fenced code block이 여러 개 있으면 마지막 block 선택
+    fenced_blocks = re.findall(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
+    if fenced_blocks:
+        return fenced_blocks[-1].rstrip()
 
-#     중요:
-#     - 함수만이 아니라 필요한 helper class / helper function까지
-#       모두 포함한 '전체 코드'를 생성해야 할 수 있다.
-#     - 따라서 prompt에서 'all necessary definitions'를 명시한다.
-#     """
-#     return (
-#         "Write Python code to solve the following problem.\n"
-#         "Return only code.\n"
-#         "Your code must include all necessary definitions, "
-#         "such as helper functions or classes.\n\n"
-#         f"Problem:\n{sample.problem_text}\n"
-#     )
+    # 2) fenced block이 없으면 def/class부터 코드 시작점 탐색
+    lines = text.splitlines()
+
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("def ") or line.startswith("class "):
+            start_idx = i
+            break
+
+    if start_idx is not None:
+        code_lines = lines[start_idx:]
+        return "\n".join(code_lines).rstrip()
+
+    # 3) 최후 fallback
+    return strip_code_fence(text)
