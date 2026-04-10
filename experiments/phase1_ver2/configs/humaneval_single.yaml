@@ -1,0 +1,12 @@
+# Phase 1 ver2: HumanEval Single-Shot Baseline
+# 사용법: PYTHONPATH=. python -m src.orchestration.single experiments/phase1_ver2/configs/humaneval_single.yaml
+method_name : "single"
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"   # sLM 모델 (필요시 변경)
+  max_new_tokens: 512
+  temperature: 0.0
+
+dataset : "humaneval"
+num_samples: 5          # 테스트할 문제 수 humaneval(전체: 164)
+output_dir: "results/phase1_ver2/sample/single_humaneval"

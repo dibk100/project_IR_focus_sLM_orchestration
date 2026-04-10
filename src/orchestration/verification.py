@@ -1,5 +1,6 @@
 """
 Verification-Only Orchestration
+작동 흐름 : Generation → Execution → Verifier (binary judgment)
 
 흐름:
 1. task 읽기
@@ -8,9 +9,8 @@ Verification-Only Orchestration
 4. verifier가 코드가 맞는지 PASS/FAIL 판정
 5. 결과 저장
 
-핵심:
-- verifier는 수정하지 않고 판정만 한다.
-- 즉 pure verification (V) 효과를 측정한다.
+역할 :
+에러와 sLM 판단까지 같이 기록하는 분석기
 """
 import os
 import re
