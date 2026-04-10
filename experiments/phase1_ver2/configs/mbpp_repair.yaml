@@ -1,5 +1,5 @@
 # Phase 1 ver2: MBPP Simple Repair Loop
-# 사용법: PYTHONPATH=. python -m src.orchestration.single experiments/phase1_ver2/configs/mbpp_repair.yaml
+# 사용법: PYTHONPATH=. python -m src.orchestration.repair experiments/phase1_ver2/configs/mbpp_repair.yaml
 method_name : "repair"
 
 model:
@@ -8,6 +8,6 @@ model:
   temperature: 0.0
 
 dataset : "mbpp"
-num_samples: 5          # 테스트할 문제 수 mbpp(전체: 374)
+num_samples: 374          # 테스트할 문제 수 mbpp(전체: 374)
 output_dir: "results/phase1_ver2/mbpp/repair"
 max_repair_attempts: 2

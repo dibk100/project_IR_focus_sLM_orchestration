@@ -1,5 +1,5 @@
 # Phase 1: HumanEval Refinement-Only
-# 사용법: PYTHONPATH=. python -m src.orchestration.refinement experiments/phase1_easy/configs/humaneval_refinement.yaml
+# 사용법: PYTHONPATH=. python -m src.orchestration.retry experiments/phase1_ver2/configs/humaneval_retry.yaml
 
 dataset: "humaneval"
 
@@ -10,4 +10,4 @@ model:
 
 num_samples: 164
 max_refinement_attempts: 2
-output_dir: "results/phase1_easy/refinement"
+output_dir: "results/phase1_easy/retry"
