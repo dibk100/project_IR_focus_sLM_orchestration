@@ -8,6 +8,6 @@ model:
   temperature: 0.0
 
 dataset : "mbpp"
-num_samples: 5          # 테스트할 문제 수 mbpp(전체: 374)
-output_dir: "results/phase1_ver2/sample_mbpp/single_prompt_v6"
+num_samples: 374          # 테스트할 문제 수 mbpp(전체: 374)
+output_dir: "results/phase1_ver2/mbpp/single"
 

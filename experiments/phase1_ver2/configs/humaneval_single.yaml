@@ -8,5 +8,5 @@ model:
   temperature: 0.0
 
 dataset : "humaneval"
-num_samples: 5          # 테스트할 문제 수 humaneval(전체: 164)
-output_dir: "results/phase1_ver2/sample/single_humaneval"
+num_samples: 164          # 테스트할 문제 수 humaneval(전체: 164)
+output_dir: "results/phase1_ver2/humaneval/single"
