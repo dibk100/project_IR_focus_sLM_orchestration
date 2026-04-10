@@ -81,3 +81,26 @@ Execution error:
 
 Corrected code:
 """
+
+def build_mbpp_refinement_prompt(
+    sample: MBPPSample,
+    previous_code: str,
+) -> str:
+    test_hint = sample.test_list[0] if sample.test_list else ""
+
+    return f"""Write Python code only.
+Improve the previous solution so that it is more likely to pass the test.
+Use the exact function name and arguments required by the test.
+Include any needed helper classes or functions.
+
+Problem:
+{sample.problem_text}
+
+Test hint:
+{test_hint}
+
+Previous solution:
+{previous_code}
+
+Improved code:
+"""

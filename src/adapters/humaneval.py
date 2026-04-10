@@ -10,6 +10,7 @@ from src.utils.prompting import (
     build_humaneval_prompt,
     build_humaneval_repair_prompt,
     extract_humaneval_code,
+    build_humaneval_refinement_prompt
 )
 
 class HumanEvalAdapter(BaseAdapter):
@@ -24,7 +25,17 @@ class HumanEvalAdapter(BaseAdapter):
             previous_code=previous_code,
             error_message=error_message,
         )
-
+    
+    def build_refinement_prompt(
+        self,
+        sample,
+        previous_code: str,
+    ) -> str:
+        return build_humaneval_refinement_prompt(
+            sample=sample,
+            previous_code=previous_code,
+        )
+    
     def extract_code(self, sample: HumanEvalSample, raw_output: str) -> str:
         return extract_humaneval_code(sample, raw_output)
 

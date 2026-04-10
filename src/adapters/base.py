@@ -130,3 +130,11 @@ class BaseAdapter(ABC):
         error_message: str | None,
     ) -> str:
         raise NotImplementedError
+    
+    @abstractmethod
+    def build_refinement_prompt(
+        self,
+        sample: Any,
+        previous_code: str,
+    ) -> str:
+        raise NotImplementedError

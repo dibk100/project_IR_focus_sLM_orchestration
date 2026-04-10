@@ -10,6 +10,7 @@ from src.utils.prompting import (
     build_mbpp_prompt,
     build_mbpp_repair_prompt,
     extract_mbpp_code,
+    build_mbpp_refinement_prompt,
 )
 
 
@@ -24,6 +25,16 @@ class MBPPAdapter(BaseAdapter):
             sample=sample,
             previous_code=previous_code,
             error_message=error_message,
+        )
+        
+    def build_refinement_prompt(
+        self,
+        sample,
+        previous_code: str,
+    ) -> str:
+        return build_mbpp_refinement_prompt(
+            sample=sample,
+            previous_code=previous_code,
         )
 
     def extract_code(self, sample: MBPPSample, raw_output: str) -> str:

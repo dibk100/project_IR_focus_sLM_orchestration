@@ -64,3 +64,27 @@ Requirements:
 
 [Corrected Solution]
 """
+
+def build_humaneval_refinement_prompt(
+    sample: HumanEvalSample,
+    previous_code: str,
+) -> str:
+    return f"""You are given a Python programming task and a previous candidate solution.
+
+Your job is to improve the solution so that it is more likely to be correct.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Do not include explanations.
+- Keep the exact target function name and signature from the task.
+- Improve the code if needed; otherwise return a clean complete solution.
+
+[Task Prompt]
+{sample.prompt}
+
+[Previous Solution]
+{previous_code}
+
+[Improved Solution]
+"""
