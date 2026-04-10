@@ -11,7 +11,6 @@ Planner-Coder Orchestration
 Phase 1에서는 repair 없이 planner/coder의 순수 효과를 본다.
 """
 import os
-import re
 import time
 import yaml
 from datetime import datetime
@@ -20,6 +19,8 @@ from src.models.hf_model import HFModel
 
 from src.tasks.humaneval import HumanEvalTask
 from src.tasks.mbpp import MBPPTask
+from src.tasks.humaneval import HumanEvalSample
+from src.tasks.mbpp import MBPPSample
 
 from src.adapters.humaneval import HumanEvalAdapter
 from src.adapters.mbpp import MBPPAdapter
@@ -30,6 +31,13 @@ from src.evaluation.metrics import (
 )
 
 from src.utils.io import save_result, save_results_jsonl
+from src.utils.prompting.planner_coder import (
+    build_humaneval_planner_prompt,
+    build_mbpp_planner_prompt,
+    build_humaneval_coder_prompt,
+    build_mbpp_coder_prompt,
+    extract_planner_output,
+)
 
 
 def load_task_and_adapter(dataset_name: str):
@@ -45,148 +53,30 @@ def load_task_and_adapter(dataset_name: str):
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def build_planner_prompt(sample, adapter) -> str:
+def build_planner_prompt_for_sample(sample) -> str:
     """
-    planner는 코드가 아니라 짧은 해결 계획만 생성한다.
-
-    dataset-specific initial prompt를 그대로 쓰면
-    '코드만 출력' 같은 제약까지 planner에게 전달될 수 있으므로,
-    여기서는 문제 자체를 중심으로 planning prompt를 구성한다.
+    sample 타입에 따라 planner prompt를 선택한다.
     """
-    if hasattr(sample, "problem_text"):
-        task_text = sample.problem_text
-    else:
-        task_text = sample.prompt
+    if isinstance(sample, HumanEvalSample):
+        return build_humaneval_planner_prompt(sample)
 
-    extra_hint = ""
-    if hasattr(sample, "test_list") and sample.test_list:
-        extra_hint = (
-            "\nYou must respect the function interface implied by this test:\n"
-            f"{sample.test_list[0]}\n"
-        )
+    if isinstance(sample, MBPPSample):
+        return build_mbpp_planner_prompt(sample)
 
-    return f"""You are planning a Python solution.
-
-Task:
-{task_text}
-{extra_hint}
-Write a very short plan.
-
-Rules:
-- Do NOT write code.
-- Use at most 3 bullet points.
-- Focus only on the core algorithm.
-- Keep the expected function interface in mind.
-- Mention helper classes/functions only if absolutely necessary.
-
-Plan:
-"""
+    raise TypeError(f"Unsupported sample type: {type(sample)}")
 
 
-def build_coder_prompt(sample, planner_output: str) -> str:
+def build_coder_prompt_for_sample(sample, planner_output: str) -> str:
     """
-    planner의 계획을 바탕으로 coder prompt를 구성한다.
-
-    HumanEval:
-    - 함수 completion 스타일이므로 원본 prompt를 유지하고
-      plan을 상단 주석 형태 안내문으로 추가
-
-    MBPP:
-    - full-code generation 스타일이므로
-      문제 설명 + test hint + plan을 함께 제공
+    sample 타입에 따라 coder prompt를 선택한다.
     """
-    if hasattr(sample, "entry_point") and hasattr(sample, "prompt"):
-        # HumanEval
-        return (
-            "Complete the following Python function according to the plan.\n"
-            "Return only Python code.\n"
-            "Do not include explanations or markdown fences.\n\n"
-            f"Plan:\n{planner_output}\n\n"
-            f"{sample.prompt}"
-        )
+    if isinstance(sample, HumanEvalSample):
+        return build_humaneval_coder_prompt(sample, planner_output)
 
-    # MBPP
-    test_hint = ""
-    if hasattr(sample, "test_list") and sample.test_list:
-        test_hint = (
-            "\nTest hint:\n"
-            f"{sample.test_list[0]}\n"
-        )
+    if isinstance(sample, MBPPSample):
+        return build_mbpp_coder_prompt(sample, planner_output)
 
-    return (
-        "Write Python code only.\n"
-        "Solve the problem below using the plan.\n"
-        "Use the exact function name and arguments required by the test.\n"
-        "Include any needed helper classes or functions.\n\n"
-        f"Problem:\n{sample.problem_text}\n"
-        f"{test_hint}\n"
-        f"Plan:\n{planner_output}\n"
-    )
-
-
-def extract_planner_output(raw_output: str) -> str:
-    """
-    planner 출력은 텍스트 계획이므로 가볍게 정리만 한다.
-    """
-    return raw_output.strip()
-
-
-def extract_humaneval_full_function_code(
-    raw_output: str,
-    entry_point: str,
-    fallback_prompt: str,
-) -> str:
-    """
-    planner-coder / HumanEval용:
-    raw_output에서 target 함수 전체를 추출한다.
-
-    HumanEval coder는 종종:
-    - 함수 전체를 다시 출력하거나
-    - 함수 본문만 출력할 수 있다.
-
-    처리 전략:
-    1. target 함수 전체가 있으면 그 함수 블록 사용
-    2. 없으면 함수 본문으로 간주하고 fallback_prompt 뒤에 붙임
-    """
-    text = raw_output.strip()
-    text = text.replace("```python", "").replace("```", "").strip()
-
-    lines = text.splitlines()
-
-    imports = []
-    function_block = []
-    in_target_function = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        if stripped.startswith("import ") or stripped.startswith("from "):
-            imports.append(line)
-            continue
-
-        if re.match(rf"def\s+{re.escape(entry_point)}\s*\(", stripped):
-            in_target_function = True
-
-        if in_target_function:
-            if (
-                function_block
-                and line.startswith("def ")
-                and not re.match(rf"def\s+{re.escape(entry_point)}\s*\(", stripped)
-            ):
-                break
-            function_block.append(line)
-
-    # 함수 전체가 있으면 그걸 사용
-    if function_block:
-        final_code = "\n".join(imports + ([""] if imports else []) + function_block).rstrip()
-        return final_code + "\n"
-
-    # 함수 전체가 없으면 본문 생성으로 간주
-    stripped_text = text.strip()
-    if len(stripped_text) < 2:
-        return fallback_prompt
-
-    return fallback_prompt + stripped_text
+    raise TypeError(f"Unsupported sample type: {type(sample)}")
 
 
 def run_planner_coder(config_path: str):
@@ -247,7 +137,7 @@ def run_planner_coder(config_path: str):
         print(f"\n--- [{i + 1}/{samples_to_run}] {sample.task_id} ---")
 
         # 4-1. planner step
-        planner_prompt = build_planner_prompt(sample, adapter)
+        planner_prompt = build_planner_prompt_for_sample(sample)
 
         planner_start = time.perf_counter()
         planner_raw_output = planner_model.generate(planner_prompt)
@@ -257,7 +147,7 @@ def run_planner_coder(config_path: str):
         planner_output = extract_planner_output(planner_raw_output)
 
         # 4-2. coder step
-        coder_prompt = build_coder_prompt(sample, planner_output)
+        coder_prompt = build_coder_prompt_for_sample(sample, planner_output)
 
         coder_start = time.perf_counter()
         coder_raw_output = coder_model.generate(coder_prompt)
@@ -265,14 +155,10 @@ def run_planner_coder(config_path: str):
         coder_latency_sec = coder_end - coder_start
 
         # 4-3. code extraction
-        if dataset_name == "humaneval":
-            generated_code = extract_humaneval_full_function_code(
-                raw_output=coder_raw_output,
-                entry_point=sample.entry_point,
-                fallback_prompt=sample.prompt,
-            )
-        else:
-            generated_code = adapter.extract_code(sample, coder_raw_output)
+        generated_code = adapter.extract_code_for_planner(
+            sample,
+            coder_raw_output,
+        )
 
         # 4-4. execution / evaluation
         exec_result = adapter.execute(sample, generated_code)

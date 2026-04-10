@@ -138,3 +138,10 @@ class BaseAdapter(ABC):
         previous_code: str,
     ) -> str:
         raise NotImplementedError
+    
+    def extract_code_for_planner(
+        self,
+        sample,
+        raw_output: str,
+    ) -> str:
+        raise NotImplementedError

@@ -6,6 +6,7 @@ HumanEval 전용 프롬프트 및 코드 추출 유틸리티
 """
 from src.tasks.humaneval import HumanEvalSample
 from .common import strip_code_fence, truncate_at_new_toplevel_block
+import re
 
 
 def build_humaneval_prompt(sample: HumanEvalSample) -> str:
@@ -88,3 +89,53 @@ Requirements:
 
 [Improved Solution]
 """
+
+def extract_humaneval_full_function_code(raw_output: str, entry_point: str, fallback_prompt: str) -> str:
+    """planner/coder용: raw_output에서 target 함수 전체를 추출."""
+    text = raw_output.strip()
+
+    # markdown 제거
+    text = text.replace("```python", "")
+    text = text.replace("```", "").strip()
+
+    lines = text.splitlines()
+
+    imports = []
+    function_block = []
+
+    in_target_function = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # import 수집
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            imports.append(line)
+            continue
+
+        # target 함수 시작
+        if re.match(rf"def\s+{re.escape(entry_point)}\s*\(", stripped):
+            in_target_function = True
+
+        if in_target_function:
+            # 다른 함수 나오면 종료
+            if (
+                function_block
+                and line.startswith("def ")
+                and not re.match(rf"def\s+{re.escape(entry_point)}\s*\(", stripped)
+            ):
+                break
+
+            function_block.append(line)
+
+    # fallback
+    if not function_block:
+        # 붕괴 출력 방지: 너무 짧거나 code-like 하지 않으면 빈 코드로 반환
+        stripped = text.strip()
+        if len(stripped) < 20 or stripped in {"s", "p"}:
+            return fallback_prompt
+        return fallback_prompt + "\n" + stripped
+
+    # 최종 조합: imports + function
+    final_code = "\n".join(imports + [""] + function_block).rstrip() + "\n"
+    return final_code

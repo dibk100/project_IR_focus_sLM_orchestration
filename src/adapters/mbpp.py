@@ -128,3 +128,6 @@ class MBPPAdapter(BaseAdapter):
             return "test_execution_error"
 
         return "unknown_error"
+    
+    def extract_code_for_planner(self, sample, raw_output: str) -> str:
+        return self.extract_code(sample, raw_output)

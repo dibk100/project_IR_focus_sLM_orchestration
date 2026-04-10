@@ -10,7 +10,8 @@ from src.utils.prompting import (
     build_humaneval_prompt,
     build_humaneval_repair_prompt,
     extract_humaneval_code,
-    build_humaneval_refinement_prompt
+    build_humaneval_refinement_prompt,
+    extract_humaneval_full_function_code
 )
 
 class HumanEvalAdapter(BaseAdapter):
@@ -140,3 +141,10 @@ class HumanEvalAdapter(BaseAdapter):
                 return "import_error"
 
         return "runtime_error"
+    
+    def extract_code_for_planner(self, sample, raw_output: str) -> str:
+        return extract_humaneval_full_function_code(
+            raw_output=raw_output,
+            entry_point=sample.entry_point,
+            fallback_prompt=sample.prompt,
+        )
