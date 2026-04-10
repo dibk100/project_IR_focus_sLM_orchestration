@@ -121,3 +121,12 @@ class BaseAdapter(ABC):
             error_message=info.get("error_message"),
             meta=info.get("meta", {}),
         )
+        
+    @abstractmethod
+    def build_repair_prompt(
+        self,
+        sample: Any,
+        previous_code: str,
+        error_message: str | None,
+    ) -> str:
+        raise NotImplementedError

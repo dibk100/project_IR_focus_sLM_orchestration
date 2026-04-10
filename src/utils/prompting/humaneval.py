@@ -31,3 +31,36 @@ def extract_humaneval_code(sample: HumanEvalSample, generation: str) -> str:
     cleaned = strip_code_fence(generation)
     extracted_body = truncate_at_new_toplevel_block(cleaned)
     return sample.prompt + extracted_body
+
+def build_humaneval_repair_prompt(
+    sample: HumanEvalSample,
+    previous_code: str,
+    error_message: str | None,
+) -> str:
+    """
+    실패한 코드와 에러 메시지를 바탕으로 repair prompt 생성
+    """
+    
+    error_message = error_message or "Unknown execution error."
+
+    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
+
+Your job is to repair the solution so that it passes the tests.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Keep the same function name and signature.
+- Provide a complete corrected function.
+
+[Task Prompt]
+{sample.prompt}
+
+[Previous Solution]
+{previous_code}
+
+[Execution Error]
+{error_message}
+
+[Corrected Solution]
+"""

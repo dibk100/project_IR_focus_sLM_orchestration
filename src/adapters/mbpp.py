@@ -5,8 +5,12 @@ from typing import Any, Dict
 
 from src.adapters.base import BaseAdapter
 from src.tasks.mbpp import MBPPSample
-from src.utils.prompting import build_mbpp_prompt, extract_mbpp_code
 from src.evaluation.executor import execute_mbpp_staged, MBPPExecutionTrace
+from src.utils.prompting import (
+    build_mbpp_prompt,
+    build_mbpp_repair_prompt,
+    extract_mbpp_code,
+)
 
 
 class MBPPAdapter(BaseAdapter):
@@ -14,6 +18,13 @@ class MBPPAdapter(BaseAdapter):
 
     def build_initial_prompt(self, sample: MBPPSample) -> str:
         return build_mbpp_prompt(sample)
+    
+    def build_repair_prompt(self, sample, previous_code, error_message):
+        return build_mbpp_repair_prompt(
+            sample=sample,
+            previous_code=previous_code,
+            error_message=error_message,
+        )
 
     def extract_code(self, sample: MBPPSample, raw_output: str) -> str:
         return extract_mbpp_code(raw_output)

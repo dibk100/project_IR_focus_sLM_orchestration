@@ -5,15 +5,25 @@ from typing import Any, Dict
 
 from src.adapters.base import BaseAdapter
 from src.tasks.humaneval import HumanEvalSample
-from src.utils.prompting import build_humaneval_prompt, extract_humaneval_code
 from src.evaluation.executor import execute_humaneval, ExecutionResult
-
+from src.utils.prompting import (
+    build_humaneval_prompt,
+    build_humaneval_repair_prompt,
+    extract_humaneval_code,
+)
 
 class HumanEvalAdapter(BaseAdapter):
     dataset_name = "humaneval"
 
     def build_initial_prompt(self, sample: HumanEvalSample) -> str:
         return build_humaneval_prompt(sample)
+    
+    def build_repair_prompt(self, sample, previous_code, error_message):
+        return build_humaneval_repair_prompt(
+            sample=sample,
+            previous_code=previous_code,
+            error_message=error_message,
+        )
 
     def extract_code(self, sample: HumanEvalSample, raw_output: str) -> str:
         return extract_humaneval_code(sample, raw_output)

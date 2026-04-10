@@ -53,3 +53,31 @@ def extract_mbpp_code(raw_output: str) -> str:
 
     # 3) 최후 fallback
     return strip_code_fence(text)
+
+def build_mbpp_repair_prompt(
+    sample: MBPPSample,
+    previous_code: str,
+    error_message: str | None,
+) -> str:
+    error_message = error_message or "Unknown execution error."
+    test_hint = sample.test_list[0] if sample.test_list else ""
+
+    return f"""Write Python code only.
+Repair the previous solution so that it passes the test.
+Use the exact function name and arguments required by the test.
+Include any needed helper classes or functions.
+
+Problem:
+{sample.problem_text}
+
+Test hint:
+{test_hint}
+
+Previous solution:
+{previous_code}
+
+Execution error:
+{error_message}
+
+Corrected code:
+"""
