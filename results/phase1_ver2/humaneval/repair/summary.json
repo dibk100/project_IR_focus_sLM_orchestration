@@ -1,9 +1,9 @@
 {
   "experiment": {
     "phase": "phase1_easy",
-    "orchestration": "single-shot",
+    "orchestration": "simple-repair-loop",
     "task": "humaneval",
-    "timestamp": "20260410_105210",
+    "timestamp": "20260410_110858",
     "config_path": "experiments/phase1_ver2/configs/humaneval_repair.yaml"
   },
   "model": {
@@ -11,13 +11,16 @@
     "max_new_tokens": 512,
     "temperature": 0.0
   },
+  "repair": {
+    "max_repair_attempts": 2
+  },
   "summary": {
-    "total": 5,
-    "passed": 4,
-    "exec_success": 5,
-    "pass@1": 0.8,
-    "execution_success_rate": 1.0,
-    "conditional_pass": 0.8
+    "total": 164,
+    "passed": 140,
+    "exec_success": 153,
+    "pass@1": 0.8536585365853658,
+    "execution_success_rate": 0.9329268292682927,
+    "conditional_pass": 0.9150326797385621
   },
   "extra_summary": {}
 }

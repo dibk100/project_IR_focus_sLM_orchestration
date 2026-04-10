@@ -1,5 +1,5 @@
 # Phase 1 ver2: HumanEval Simple Repair Loop
-# 사용법: PYTHONPATH=. python -m src.orchestration.single experiments/phase1_ver2/configs/humaneval_repair.yaml
+# 사용법: PYTHONPATH=. python -m src.orchestration.repair experiments/phase1_ver2/configs/humaneval_repair.yaml
 method_name : "repair"
 
 model:
