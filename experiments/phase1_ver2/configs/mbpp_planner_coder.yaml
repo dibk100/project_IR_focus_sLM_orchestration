@@ -1,0 +1,17 @@
+# Phase 1 ver2: MBPP Planner-Coder
+# 사용법: PYTHONPATH=. python -m src.orchestration.planner_coder experiments/phase1_ver2/configs/mbpp_planner_coder.yaml
+method_name : "planner_coder"
+
+planner_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 256
+  temperature: 0.0
+
+coder_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.0
+
+dataset : "mbpp"
+num_samples: 374          # 테스트할 문제 수 mbpp(전체: 374)
+output_dir: "results/phase1_ver2/planner_coder"

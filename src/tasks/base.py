@@ -1,33 +1,15 @@
-"""
-Task 인터페이스 정의
-모든 task loader는 이 베이스 클래스를 상속하여 구현한다.
-"""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import Generic, TypeVar, List
 
+T = TypeVar("T")
 
-@dataclass
-class TaskSample:
-    """단일 태스크 샘플"""
-    task_id: str
-    prompt: str
-    entry_point: str
-    canonical_solution: Optional[str] = None
-    test: Optional[str] = None
-
-
-class BaseTask(ABC):
-    """태스크 로더 베이스 클래스"""
-
+class BaseTask(ABC, Generic[T]):
     @abstractmethod
-    def load(self) -> List[TaskSample]:
-        """전체 데이터셋 로드"""
+    def load(self) -> List[T]:
         pass
 
     @abstractmethod
-    def get_sample(self, index: int) -> TaskSample:
-        """인덱스로 단일 샘플 반환"""
+    def get_sample(self, index: int) -> T:
         pass
 
     @abstractmethod

@@ -1,0 +1,41 @@
+{
+  "experiment": {
+    "phase": "phase1_easy",
+    "orchestration": "planner-coder",
+    "task": "mbpp",
+    "timestamp": "20260410_131056",
+    "config_path": "experiments/phase1_ver2/configs/mbpp_planner_coder.yaml"
+  },
+  "planner_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 256,
+    "temperature": 0.0
+  },
+  "coder_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 512,
+    "temperature": 0.0
+  },
+  "summary": {
+    "total": 5,
+    "passed": 2,
+    "exec_success": 5,
+    "pass@1": 0.4,
+    "execution_success_rate": 1.0,
+    "conditional_pass": 0.4
+  },
+  "extra_summary": {
+    "failed_stage_breakdown": {
+      "test": 3
+    },
+    "error_type_breakdown": {
+      "NameError": 2,
+      "AssertionError": 1
+    },
+    "code_failed": 0,
+    "setup_failed": 0,
+    "test_failed": 3,
+    "semantic_failed": 1,
+    "execution_failed": 2
+  }
+}

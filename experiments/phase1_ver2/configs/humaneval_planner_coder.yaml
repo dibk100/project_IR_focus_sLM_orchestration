@@ -1,0 +1,17 @@
+# Phase 1 ver2: HumanEval Planner-Coder
+# 사용법: PYTHONPATH=. python -m src.orchestration.planner_coder experiments/phase1_ver2/configs/humaneval_planner_coder.yaml
+method_name : "planner_coder"
+
+planner_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 256
+  temperature: 0.0
+
+coder_model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.0
+
+dataset : "humaneval"
+num_samples: 164          # 테스트할 문제 수 humaneval(전체: 164)
+output_dir: "results/phase1_ver2/planner_coder"

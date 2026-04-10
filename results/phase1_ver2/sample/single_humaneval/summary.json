@@ -1,0 +1,23 @@
+{
+  "experiment": {
+    "phase": "phase1_easy",
+    "orchestration": "single-shot",
+    "task": "humaneval",
+    "timestamp": "20260410_075934",
+    "config_path": "experiments/phase1_ver2/configs/humaneval_single.yaml"
+  },
+  "model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 512,
+    "temperature": 0.0
+  },
+  "summary": {
+    "total": 5,
+    "passed": 4,
+    "exec_success": 5,
+    "pass@1": 0.8,
+    "execution_success_rate": 1.0,
+    "conditional_pass": 0.8
+  },
+  "extra_summary": {}
+}

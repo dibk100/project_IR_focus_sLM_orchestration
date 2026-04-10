@@ -1,0 +1,13 @@
+# Phase 1: HumanEval Retry-Only
+# 사용법: PYTHONPATH=. python -m src.orchestration.retry experiments/phase1_ver2/configs/humaneval_retry.yaml
+method_name : "retry"
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.0
+
+dataset : "humaneval"
+num_samples: 164          # 테스트할 문제 수 humaneval(전체: 164)
+output_dir: "results/phase1_ver2/humaneval/retry"
+max_retry_attempts: 2

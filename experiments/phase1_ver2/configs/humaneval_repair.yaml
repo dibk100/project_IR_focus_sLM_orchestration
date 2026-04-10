@@ -1,0 +1,13 @@
+# Phase 1 ver2: HumanEval Simple Repair Loop
+# 사용법: PYTHONPATH=. python -m src.orchestration.repair experiments/phase1_ver2/configs/humaneval_repair.yaml
+method_name : "repair"
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.0
+
+dataset : "humaneval"
+num_samples: 164          # 테스트할 문제 수 humaneval(전체: 164)
+output_dir: "results/phase1_ver2/humaneval/repair"
+max_repair_attempts: 2

@@ -1,15 +1,22 @@
 """
-Simple Repair Loop Orchestration
-
-[code 생성] -> [execute (test)] -> [error message] -> [fix]
+Retry (Refinement-only) Orchestration
 
 흐름:
 1. task 읽기
 2. initial generation
-3. 실행/평가
-4. 실패 시 adapter의 repair prompt로 재생성
-5. 최대 max_repair_attempts까지 반복
-6. attempt별 결과 저장 + task별 최종 결과 요약
+3. 이전 코드를 기반으로 refinement (error message 없이)
+4. 실행/평가
+5. 반복
+
+repair :
+1. 코드 생성
+2. 실행 → 실패 + 에러 메시지
+3. (문제 + 코드 + 에러) → 수정
+4. 반복
+
+핵심:
+- execution feedback(에러 메시지)를 사용하지 않음
+- pure refinement 효과 측정
 """
 import os
 import time
@@ -33,9 +40,6 @@ from src.utils.io import save_result, save_results_jsonl
 
 
 def load_task_and_adapter(dataset_name: str):
-    """
-    dataset 이름에 따라 task loader와 adapter를 함께 반환한다.
-    """
     if dataset_name == "humaneval":
         return HumanEvalTask(), HumanEvalAdapter()
 
@@ -45,9 +49,9 @@ def load_task_and_adapter(dataset_name: str):
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def run_repair_loop(config_path: str):
-    """Simple repair loop 실험 실행"""
-    # 1. Config 로드
+def run_retry(config_path: str):
+    """Retry (refinement-only) baseline 실행"""
+    # 1. config
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -56,21 +60,21 @@ def run_repair_loop(config_path: str):
     temperature = config["model"].get("temperature", 0.0)
 
     num_samples = config.get("num_samples", 1)
-    output_dir = config.get("output_dir", "results/phase1_ver2/repair")
+    output_dir = config.get("output_dir", "results/phase1_ver2/retry")
     dataset_name = config.get("dataset", "humaneval")
-    method_name = config.get("method_name", "repair")
-    max_repair_attempts = config.get("max_repair_attempts", 2)
+    method_name = config.get("method_name", "retry")
+    max_retry_attempts = config.get("max_retry_attempts", 1)
 
     print("=" * 60)
-    print("🔁 Simple Repair Loop 실험")
+    print("🔁 Retry (Refinement-only) 실험")
     print("=" * 60)
 
-    # 2. Task / Adapter 로드
+    # 2. task / adapter
     task, adapter = load_task_and_adapter(dataset_name)
     print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
-    print(f"🔧 최대 repair 횟수: {max_repair_attempts}")
+    print(f"🔧 최대 retry 횟수: {max_retry_attempts}")
 
-    # 3. 모델 로드
+    # 3. model
     print(f"🔄 모델 로딩: {model_name}")
     model = HFModel(
         model_name=model_name,
@@ -81,25 +85,21 @@ def run_repair_loop(config_path: str):
 
     samples_to_run = min(num_samples, len(task))
 
-    # attempt-level 결과 저장용
     all_attempt_results = []
-
-    # task-level 최종 metric 계산용
     final_eval_results = []
 
     for i in range(samples_to_run):
         sample = task.get_sample(i)
-        print(f"\n--- [{i + 1}/{samples_to_run}] {sample.task_id} ---")
+        print(f"\n--- [{i+1}/{samples_to_run}] {sample.task_id} ---")
 
-        # initial prompt
         original_prompt = adapter.build_initial_prompt(sample)
         current_prompt = original_prompt
 
         previous_code = None
         final_exec_result = None
 
-        for attempt_idx in range(max_repair_attempts + 1):
-            # 4-1. generation
+        for attempt_idx in range(max_retry_attempts + 1):
+            # generation
             gen_start = time.perf_counter()
             raw_output = model.generate(current_prompt)
             gen_end = time.perf_counter()
@@ -107,14 +107,14 @@ def run_repair_loop(config_path: str):
 
             raw_text = raw_output
 
-            # 4-2. code extraction
+            # extraction
             generated_code = adapter.extract_code(sample, raw_text)
 
-            # 4-3. execution
+            # execution
             exec_result = adapter.execute(sample, generated_code)
             final_exec_result = exec_result
 
-            # 4-4. attempt record 생성
+            # record
             attempt_record = adapter.make_attempt_record(
                 sample=sample,
                 method=method_name,
@@ -127,7 +127,6 @@ def run_repair_loop(config_path: str):
                 exec_result=exec_result,
             )
 
-            # 저장용 dict 변환
             result_entry = {
                 "dataset": attempt_record.dataset,
                 "task_id": attempt_record.task_id,
@@ -157,6 +156,7 @@ def run_repair_loop(config_path: str):
                 "fail": "❌ FAIL",
                 "timeout": "⏱️ TIMEOUT",
             }.get(attempt_record.status, "❓ UNKNOWN")
+
             print(f"  attempt {attempt_idx}: {pretty_status}")
 
             previous_code = generated_code
@@ -165,25 +165,23 @@ def run_repair_loop(config_path: str):
             if attempt_record.passed:
                 break
 
-            # 마지막 attempt면 종료
-            if attempt_idx == max_repair_attempts:
+            # 마지막이면 종료
+            if attempt_idx == max_retry_attempts:
                 break
 
-            # 4-5. 다음 repair prompt 생성 (adapter에 위임)
-            current_prompt = adapter.build_repair_prompt(
+            # error 없이 refinement
+            current_prompt = adapter.build_refinement_prompt(
                 sample=sample,
                 previous_code=previous_code,
-                error_message=attempt_record.error_message,
             )
 
-        # task-level 최종 결과 저장
         final_eval_results.append(final_exec_result)
 
-    # 5. 결과 요약
+    # 4. summary
     summary = summarize_phase1_results(final_eval_results)
 
     print(f"\n{'=' * 60}")
-    print("📊 결과 요약 (task-level final result)")
+    print("📊 결과 요약")
     print(f"  총 문제: {summary['total']}")
     print(f"  통과: {summary['passed']}")
     print(f"  실행 성공: {summary['exec_success']}")
@@ -195,7 +193,8 @@ def run_repair_loop(config_path: str):
     extra_summary = {}
     if dataset_name == "mbpp":
         extra_summary = summarize_mbpp_failure_breakdown(final_eval_results)
-        print("📌 MBPP Failure Breakdown (final attempt)")
+
+        print("📌 MBPP Failure Breakdown")
         print(f"  code_failed: {extra_summary['code_failed']}")
         print(f"  setup_failed: {extra_summary['setup_failed']}")
         print(f"  test_failed: {extra_summary['test_failed']}")
@@ -203,7 +202,7 @@ def run_repair_loop(config_path: str):
         print(f"  execution_failed: {extra_summary['execution_failed']}")
         print(f"{'=' * 60}")
 
-    # 6. 결과 저장
+    # 5. save
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -216,7 +215,7 @@ def run_repair_loop(config_path: str):
         {
             "experiment": {
                 "phase": "phase1_easy",
-                "orchestration": "simple-repair-loop",
+                "orchestration": "retry",
                 "task": dataset_name,
                 "timestamp": timestamp,
                 "config_path": config_path,
@@ -226,8 +225,8 @@ def run_repair_loop(config_path: str):
                 "max_new_tokens": max_new_tokens,
                 "temperature": temperature,
             },
-            "repair": {
-                "max_repair_attempts": max_repair_attempts,
+            "retry": {
+                "max_retry_attempts": max_retry_attempts,
             },
             "summary": summary,
             "extra_summary": extra_summary,
@@ -240,7 +239,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python -m src.orchestration.repair <config.yaml>")
+        print("Usage: python -m src.orchestration.retry <config.yaml>")
         sys.exit(1)
 
-    run_repair_loop(sys.argv[1])
+    run_retry(sys.argv[1])
