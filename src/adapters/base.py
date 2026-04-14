@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 class AttemptRecord:
     """
     orchestration 계층이 공통으로 다룰 수 있는 attempt 결과 포맷
+    ver3 기준 필드를 포함하되, 기존 exec_success도 함께 유지한다.
     """
     dataset: str
     task_id: str
@@ -27,13 +28,21 @@ class AttemptRecord:
     raw_output: str
     generated_code: str
 
-    status: str                 # "pass" / "fail" / "timeout"
+    status: str                 # "PASS" / "EXEC_FAIL:TypeError" / "TEST_FAIL:AssertionError"
     passed: bool
-    exec_success: bool
+    exec_ok: bool
+    test_pass: bool
     latency_sec: float
 
+    # ver2 호환용
+    exec_success: bool
+
     error_type: Optional[str] = None
+    error_stage: Optional[str] = None
     error_message: Optional[str] = None
+
+    tests_passed: Optional[int] = None
+    tests_total: Optional[int] = None
 
     meta: Dict[str, Any] = field(default_factory=dict)
 
@@ -78,9 +87,14 @@ class BaseAdapter(ABC):
         {
             "status": str,
             "passed": bool,
-            "exec_success": bool,
+            "exec_ok": bool,
+            "test_pass": bool,
+            "exec_success": bool,   # ver2 호환용 (보통 exec_ok와 동일)
             "error_type": str | None,
+            "error_stage": str | None,   # "exec" / "test" / None
             "error_message": str | None,
+            "tests_passed": int | None,
+            "tests_total": int | None,
             "meta": dict,
         }
         """
@@ -104,6 +118,9 @@ class BaseAdapter(ABC):
         """
         info = self.classify_execution(exec_result)
 
+        exec_ok = info.get("exec_ok", info.get("exec_success", False))
+        test_pass = info.get("test_pass", info.get("passed", False))
+
         return AttemptRecord(
             dataset=self.dataset_name,
             task_id=sample.task_id,
@@ -115,13 +132,18 @@ class BaseAdapter(ABC):
             generated_code=generated_code,
             status=info["status"],
             passed=info["passed"],
-            exec_success=info["exec_success"],
+            exec_ok=exec_ok,
+            test_pass=test_pass,
             latency_sec=latency_sec,
+            exec_success=info.get("exec_success", exec_ok),  # ver2 호환용
             error_type=info.get("error_type"),
+            error_stage=info.get("error_stage"),
             error_message=info.get("error_message"),
+            tests_passed=info.get("tests_passed"),
+            tests_total=info.get("tests_total"),
             meta=info.get("meta", {}),
         )
-        
+
     @abstractmethod
     def build_repair_prompt(
         self,
@@ -130,7 +152,7 @@ class BaseAdapter(ABC):
         error_message: str | None,
     ) -> str:
         raise NotImplementedError
-    
+
     @abstractmethod
     def build_refinement_prompt(
         self,
@@ -138,10 +160,10 @@ class BaseAdapter(ABC):
         previous_code: str,
     ) -> str:
         raise NotImplementedError
-    
+
     def extract_code_for_planner(
         self,
-        sample,
+        sample: Any,
         raw_output: str,
     ) -> str:
         raise NotImplementedError

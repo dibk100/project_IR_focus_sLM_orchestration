@@ -27,53 +27,71 @@ Phase 1 메트릭 계산
 
 
 """
-from typing import List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
 from collections import Counter
 
 from src.evaluation.executor import ExecutionResult, MBPPExecutionTrace
 
 
-# HumanEval 결과와 MBPP 결과를 함께 다룰 수 있도록 Union 타입 정의
-ResultType = Union[ExecutionResult, MBPPExecutionTrace]
+# HumanEval 결과와 MBPP 결과, 그리고 ver3 dict/AttemptRecord 스타일까지 함께 다룸
+ResultType = Union[ExecutionResult, MBPPExecutionTrace, Dict[str, Any], Any]
+
+
+def _get_attr(result: Any, key: str, default=None):
+    """
+    dict / dataclass / object 모두에서 안전하게 값을 꺼내는 헬퍼
+    """
+    if isinstance(result, dict):
+        return result.get(key, default)
+    return getattr(result, key, default)
 
 
 def is_passed(result: ResultType) -> bool:
     """
     최종 정답 여부를 반환
 
-    HumanEval:
-    - ExecutionResult.passed 사용
-
-    MBPP:
-    - MBPPExecutionTrace.passed 사용
+    우선순위:
+    1) passed 필드
+    2) test_pass 필드
     """
-    return result.passed
+    passed = _get_attr(result, "passed", None)
+    if passed is not None:
+        return bool(passed)
+
+    test_pass = _get_attr(result, "test_pass", None)
+    if test_pass is not None:
+        return bool(test_pass)
+
+    return False
 
 
 def is_exec_success(result: ResultType) -> bool:
     """
     execution success 여부를 반환.
 
-    이 함수가 핵심.
-    왜냐하면 Phase 1에서 execution success rate와 conditional pass를 계산할 때
-    '어디까지를 structural success로 볼 것인가'를 정의하기 때문
-
-    [MBPP]
-    - code_exec_passed and setup_exec_passed 를 execution success로 정의함. exec()의 범위를 setup까지 포함하기로 함.
-    - 즉, 생성 코드가 로드되고(setup 전까지 통과),
-      테스트를 실제로 돌릴 수 있는 상태에 도달해야 함
-    - test 단계에서 AssertionError가 나더라도 execution success로 보기로 함.
-      (semantic failure는 execution success 이후 발생)
-
-    [HumanEval]
-    - 현재 executor가 staged execution이 아니므로 완전히 동일하게 분해되진 않음
-    - 따라서 practical definition을 사용:
-        1) passed=True 이면 execution success
-        2) AssertionError 로 실패한 경우도 execution success
-           (즉, 실행은 되었고 정답 assertion에서 실패한 것)
-    - 그 외 SyntaxError, NameError, Timeout 등은 execution failure로 본다
-
+    우선순위:
+    1) exec_ok
+    2) exec_success
+    3) status
+    4) 구버전 ExecutionResult / MBPPExecutionTrace 규칙
     """
+    exec_ok = _get_attr(result, "exec_ok", None)
+    if exec_ok is not None:
+        return bool(exec_ok)
+
+    exec_success = _get_attr(result, "exec_success", None)
+    if exec_success is not None:
+        return bool(exec_success)
+
+    status = _get_attr(result, "status", None)
+    if isinstance(status, str):
+        if status == "PASS":
+            return True
+        if status.startswith("TEST_FAIL:"):
+            return True
+        if status.startswith("EXEC_FAIL:"):
+            return False
+
     if isinstance(result, MBPPExecutionTrace):
         return result.code_exec_passed and result.setup_exec_passed
 
@@ -90,14 +108,6 @@ def is_exec_success(result: ResultType) -> bool:
 def pass_at_1(results: List[ResultType]) -> float:
     """
     pass@1 계산
-
-    문제당 1개 생성한다고 가정하면,
-    pass@1은 곧 '최종 정답 비율'과 같다.
-
-    수식:
-        pass@1 = (# passed) / (# total)
-        
-    results는 problems별 faill, pass(실패, 성공) 으로 구성된 리스트
     """
     if not results:
         return 0.0
@@ -109,16 +119,6 @@ def pass_at_1(results: List[ResultType]) -> float:
 def execution_success_rate(results: List[ResultType]) -> float:
     """
     execution success rate 계산
-
-    의미:
-    - 생성 결과가 최소한 실행 가능한 평가 상태까지 갔는가?
-
-    수식:
-        execution_success_rate = (# exec_success) / (# total)
-
-    해석:
-    - structural quality 지표
-    - syntax, completeness, helper definition, setup readiness 등을 반영
     """
     if not results:
         return 0.0
@@ -130,22 +130,6 @@ def execution_success_rate(results: List[ResultType]) -> float:
 def conditional_pass(results: List[ResultType]) -> float:
     """
     conditional pass 계산
-
-    의미:
-    - 실행 가능한 코드들만 놓고 봤을 때, 실제로 정답인 비율
-
-    수식:
-        conditional_pass = (# passed) / (# exec_success)
-
-    해석:
-    - semantic quality 지표
-    - 구조적으로 실행 가능한 샘플들 중 reasoning / logic correctness를 반영
-
-    예:
-    - execution_success_rate는 높은데 conditional_pass가 낮다
-      -> 실행은 되지만 논리가 자주 틀림
-    - conditional_pass가 높다
-      -> 일단 실행 가능한 코드가 나오면 의미적으로는 잘 맞춤
     """
     if not results:
         return 0.0
@@ -161,9 +145,6 @@ def conditional_pass(results: List[ResultType]) -> float:
 def gain_vs_single(current_pass_at_1: float, single_pass_at_1: float) -> float:
     """
     single-shot baseline 대비 성능 향상량 계산
-
-    수식:
-        gain_vs_single = current_pass@1 - single_pass@1
     """
     return current_pass_at_1 - single_pass_at_1
 
@@ -173,19 +154,7 @@ def summarize_phase1_results(
     single_baseline_pass_at_1: Optional[float] = None,
 ) -> dict:
     """
-    Phase 1 핵심 지표를 한 번에 요약.
-
-    포함 지표:
-    - total
-    - passed
-    - exec_success
-    - pass@1
-    - execution_success_rate
-    - conditional_pass
-    - gain_vs_single (optional)
-
-    이 함수는 HumanEval / MBPP 공통으로 사용 가능.
-    단, failure breakdown은 데이터셋별로 따로 보는 편이 좋다.
+    Phase 1 핵심 지표를 한 번에 요약
     """
     total = len(results)
     passed_count = sum(1 for r in results if is_passed(r))
@@ -200,7 +169,6 @@ def summarize_phase1_results(
         "conditional_pass": conditional_pass(results),
     }
 
-    # single-shot baseline pass@1이 주어졌다면 gain도 함께 계산
     if single_baseline_pass_at_1 is not None:
         summary["gain_vs_single"] = gain_vs_single(
             summary["pass@1"],
@@ -210,29 +178,45 @@ def summarize_phase1_results(
     return summary
 
 
+def summarize_failure_type_counts(results: List[ResultType]) -> dict:
+    """
+    ver3 공통 failure type 집계
+    - PASS 제외
+    - status가 있으면 status 기준
+    """
+    counter = Counter()
+
+    for r in results:
+        status = _get_attr(r, "status", None)
+        if isinstance(status, str) and status != "PASS":
+            counter[status] += 1
+
+    return dict(counter)
+
+
+def summarize_transition_counts(trajectory_logs: List[Dict[str, Any]]) -> dict:
+    """
+    trajectory log 기반 전이 집계
+    transition_path의 coarse prefix 기준으로 집계
+    예:
+      EXEC_FAIL:TypeError -> TEST_FAIL:AssertionError
+      => EXEC_FAIL->TEST_FAIL
+    """
+    counter = Counter()
+
+    for traj in trajectory_logs:
+        path = traj.get("transition_path", [])
+        for i in range(len(path) - 1):
+            a = str(path[i]).split(":")[0]
+            b = str(path[i + 1]).split(":")[0]
+            counter[f"{a}->{b}"] += 1
+
+    return dict(counter)
+
+
 def summarize_mbpp_failure_breakdown(results: List[MBPPExecutionTrace]) -> dict:
     """
     MBPP 전용 failure breakdown 요약
-
-    MBPP는 staged execution 결과를 가지고 있으므로,
-    실패를 더 자세히 분석할 수 있다.
-
-    breakdown 예시:
-    - code stage failure      -> structural failure
-    - setup stage failure     -> setup/environment failure
-    - test stage + AssertionError
-                              -> semantic failure
-    - test stage + other error
-                              -> execution failure during testing
-
-    반환 항목:
-    - failed_stage_breakdown
-    - error_type_breakdown
-    - code_failed
-    - setup_failed
-    - test_failed
-    - semantic_failed
-    - execution_failed
     """
     stage_counter = Counter(r.failed_stage for r in results if r.failed_stage)
     error_counter = Counter(r.error_type for r in results if r.error_type)
@@ -241,19 +225,12 @@ def summarize_mbpp_failure_breakdown(results: List[MBPPExecutionTrace]) -> dict:
     setup_failed = sum(1 for r in results if r.failed_stage == "setup")
     test_failed = sum(1 for r in results if r.failed_stage == "test")
 
-    # semantic failure:
-    # - test 단계까지 갔고
-    # - assertion에서 실패한 경우
     semantic_failed = sum(
         1
         for r in results
         if r.failed_stage == "test" and r.error_type == "AssertionError"
     )
 
-    # execution failure:
-    # - test 단계에서 실패했지만
-    # - assertion failure가 아닌 경우
-    # 예: NameError, TypeError 등
     execution_failed = sum(
         1
         for r in results
@@ -269,7 +246,3 @@ def summarize_mbpp_failure_breakdown(results: List[MBPPExecutionTrace]) -> dict:
         "semantic_failed": semantic_failed,
         "execution_failed": execution_failed,
     }
-    
-# NOTE:
-# Current implementation assumes one result per problem (pass@1 setting).
-# If pass@k is introduced later, results should be grouped by problem first.

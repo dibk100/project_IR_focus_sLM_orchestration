@@ -17,6 +17,15 @@ code extraction
 execution
 execution 결과 해석
 """
+"""
+Single-Shot Orchestration
+task 읽기 -> 모델 호출 -> 코드 추출 -> 실행/평가 -> 결과 저장
+
+Phase1 ver3 기준:
+- nested config 구조 사용
+- HFModel.generate()의 구조화된 반환값 사용
+- step_logs / trajectory_logs / summary 저장
+"""
 import os
 import time
 import yaml
@@ -51,17 +60,15 @@ def load_task_and_adapter(dataset_name: str):
     raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
-def normalize_model_output(raw_output) -> str:
+def make_run_id(config: dict) -> str:
     """
-    LLM.generate() 반환 타입을 방어적으로 정리
-    LM이 출력을 문자열(str)이 아닌 타입을 출력할 경우, str로 변환하는 방어
-    
-    - str 반환 시 그대로 사용
-    - dict 반환 시 text 필드 사용
+    run_id 자동 생성/보정
+    - config에 값이 있으면 기본값으로 사용
+    - 뒤에 timestamp를 붙여 고유하게 만듦
     """
-    if isinstance(raw_output, dict):
-        return raw_output.get("text", "")
-    return raw_output
+    base_run_id = config.get("run", {}).get("run_id", "phase1_single")
+    suffix = datetime.now().strftime("%m%d%H%M%S")
+    return f"{base_run_id}_{suffix}"
 
 
 def run_single_shot(config_path: str):
@@ -70,20 +77,66 @@ def run_single_shot(config_path: str):
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    model_name = config["model"]["name"]
-    max_new_tokens = config["model"].get("max_new_tokens", 512)
-    temperature = config["model"].get("temperature", 0.0)
-    num_samples = config.get("num_samples", 1)
-    output_dir = config.get("output_dir", "results/non/single")
+    run_cfg = config.get("run", {})
+    dataset_cfg = config.get("dataset", {})
+    model_cfg = config.get("model", {})
+    method_cfg = config.get("method", {})
+    budget_cfg = config.get("budget", {})
+    output_cfg = config.get("output", {})
+    logging_cfg = config.get("logging", {})
 
-    dataset_name = config.get("dataset", "non")
-    method_name = config.get("method_name", "non")
+    run_id = make_run_id(config)
+    seed = run_cfg.get("seed", 42)
 
-    # 2. Task / Adapter 로드
+    dataset_name = dataset_cfg.get("name", "humaneval")
+    num_samples = dataset_cfg.get("num_samples", 1)
+
+    model_name = model_cfg["name"]
+    max_new_tokens = model_cfg.get("max_new_tokens", 512)
+    temperature = model_cfg.get("temperature", 0.0)
+
+    method_name = method_cfg.get("name", "single_shot")
+    max_calls = budget_cfg.get("max_calls", 1)
+
+    output_dir = output_cfg.get("dir", f"results/phase1_ver3/{dataset_name}/single")
+
+    save_step_level = logging_cfg.get("save_step_level", True)
+    save_trajectory_level = logging_cfg.get("save_trajectory_level", True)
+    save_problem_summary = logging_cfg.get("save_problem_summary", True)
+    save_run_analysis = logging_cfg.get("save_run_analysis", True)
+    save_code = logging_cfg.get("save_code", True)
+
+    os.makedirs(output_dir, exist_ok=True)
+
     print("=" * 60)
     print("📋 Single-Shot Baseline 실험")
     print("=" * 60)
+    print(f"run_id      : {run_id}")
+    print(f"dataset     : {dataset_name}")
+    print(f"method      : {method_name}")
+    print(f"seed        : {seed}")
+    print(f"output_dir  : {output_dir}")
+    print("=" * 60)
 
+    # config snapshot 저장
+    save_result(
+        {
+            "run": {
+                "run_id": run_id,
+                "seed": seed,
+            },
+            "dataset": dataset_cfg,
+            "model": model_cfg,
+            "method": method_cfg,
+            "budget": budget_cfg,
+            "output": output_cfg,
+            "logging": logging_cfg,
+            "config_path": config_path,
+        },
+        os.path.join(output_dir, "config.json"),
+    )
+
+    # 2. Task / Adapter 로드
     task, adapter = load_task_and_adapter(dataset_name)
     print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
 
@@ -97,26 +150,32 @@ def run_single_shot(config_path: str):
     print("✅ 모델 로딩 완료")
 
     # 4. 실험 실행
-    all_results = []
+    step_logs = []
+    trajectory_logs = []
     eval_results = []
 
     samples_to_run = min(num_samples, len(task))
 
     for i in range(samples_to_run):
         sample = task.get_sample(i)
-        print(f"\n--- [{i + 1}/{samples_to_run}] {sample.task_id} ---")
+        problem_id = sample.task_id
+        trajectory_id = f"{problem_id}_run0"
+
+        print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} ---")
 
         # 4-1. prompt 구성
         prompt = adapter.build_initial_prompt(sample)
 
         # 4-2. 모델 호출 + 시간 측정
         gen_start = time.perf_counter()
-        raw_output = model.generate(prompt)
+        gen_result = model.generate(prompt)
         gen_end = time.perf_counter()
         latency_sec = gen_end - gen_start
 
-        #raw_text = normalize_model_output(raw_output)
-        raw_text = raw_output
+        raw_text = gen_result["text"]
+        input_tokens = gen_result["input_tokens"]
+        output_tokens = gen_result["output_tokens"]
+        total_tokens = gen_result["total_tokens"]
 
         # 4-3. 코드 추출
         generated_code = adapter.extract_code(sample, raw_text)
@@ -138,39 +197,78 @@ def run_single_shot(config_path: str):
             exec_result=exec_result,
         )
 
-        # 저장용 dict로 변환
-        result_entry = {
-            "dataset": attempt_record.dataset,
-            "task_id": attempt_record.task_id,
-            "method": attempt_record.method,
-            "model_name": attempt_record.model_name,
-            "attempt_idx": attempt_record.attempt_idx,
-            "prompt": attempt_record.prompt,
-            "raw_output": attempt_record.raw_output,
-            "generated_code": attempt_record.generated_code,
+        # 4-6. step-level log
+        step_entry = {
+            "run_id": run_id,
+            "dataset": dataset_name,
+            "problem_id": problem_id,
+            "method": method_name,
+            "trajectory_id": trajectory_id,
+            "step_id": 0,
+            "call_index": 0,
+            "candidate_id": 0,
+            "stage": "generate",
+            "is_retry": False,
+            "is_repair": False,
+            "is_planner": False,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "latency_sec": latency_sec,
+            "code": generated_code if save_code else None,
+            "exec_ok": attempt_record.exec_ok,
+            "test_pass": attempt_record.test_pass,
             "status": attempt_record.status,
-            "passed": attempt_record.passed,
-            "exec_success": attempt_record.exec_success,
             "error_type": attempt_record.error_type,
+            "error_stage": attempt_record.error_stage,
             "error_message": attempt_record.error_message,
-            "latency_sec": attempt_record.latency_sec,
-            "meta": attempt_record.meta,
+            "tests_passed": attempt_record.tests_passed,
+            "tests_total": attempt_record.tests_total,
+            "code_length": len(generated_code) if generated_code is not None else 0,
+            "selected": None,
+            "selection_rank": None,
         }
 
-        # HumanEval이면 entry_point를 보기 좋게 최상단에도 남김
         if hasattr(sample, "entry_point"):
-            result_entry["entry_point"] = sample.entry_point
+            step_entry["entry_point"] = sample.entry_point
 
-        # timeout은 현재 HumanEval 쪽 meta에 들어있으므로 꺼내서 같이 저장
-        result_entry["timeout"] = attempt_record.meta.get("timeout", False)
+        step_logs.append(step_entry)
 
-        all_results.append(result_entry)
+        # 4-7. trajectory-level log
+        final_status = attempt_record.status
+        num_exec_fail = 1 if str(final_status).startswith("EXEC_FAIL") else 0
+        num_test_fail = 1 if str(final_status).startswith("TEST_FAIL") else 0
 
-        pretty_status = {
-            "pass": "✅ PASS",
-            "fail": "❌ FAIL",
-            "timeout": "⏱️ TIMEOUT",
-        }.get(attempt_record.status, "❓ UNKNOWN")
+        trajectory_entry = {
+            "run_id": run_id,
+            "dataset": dataset_name,
+            "problem_id": problem_id,
+            "method": method_name,
+            "trajectory_id": trajectory_id,
+            "num_steps": 1,
+            "call_count": 1,
+            "final_status": final_status,
+            "final_tests_passed": attempt_record.tests_passed,
+            "final_tests_total": attempt_record.tests_total,
+            "total_tokens": total_tokens,
+            "total_latency": latency_sec,
+            "num_exec_fail": num_exec_fail,
+            "num_test_fail": num_test_fail,
+            "transition_path": [final_status],
+            "budget_used": {
+                "tokens": total_tokens,
+                "calls": 1,
+                "latency": latency_sec,
+            },
+        }
+
+        trajectory_logs.append(trajectory_entry)
+
+        pretty_status = (
+            "✅ PASS"
+            if final_status == "PASS"
+            else f"❌ {final_status}"
+        )
         print(f"  {pretty_status}")
 
     # 5. 결과 요약
@@ -197,34 +295,84 @@ def run_single_shot(config_path: str):
         print(f"  execution_failed: {extra_summary['execution_failed']}")
         print(f"{'=' * 60}")
 
-    # 6. 결과 저장
-    os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    save_results_jsonl(
-        all_results,
-        os.path.join(output_dir, "details.jsonl"),
+    # 6. Problem-level summary
+    avg_tokens = (
+        sum(x["total_tokens"] for x in trajectory_logs) / len(trajectory_logs)
+        if trajectory_logs else 0.0
+    )
+    avg_latency = (
+        sum(x["total_latency"] for x in trajectory_logs) / len(trajectory_logs)
+        if trajectory_logs else 0.0
+    )
+    avg_calls = (
+        sum(x["call_count"] for x in trajectory_logs) / len(trajectory_logs)
+        if trajectory_logs else 0.0
     )
 
-    save_result(
-        {
-            "experiment": {
-                "phase": "phase1_easy",
-                "orchestration": "single-shot",
-                "task": dataset_name,
-                "timestamp": timestamp,
-                "config_path": config_path,
-            },
-            "model": {
-                "name": model_name,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-            },
-            "summary": summary,
-            "extra_summary": extra_summary,
-        },
-        os.path.join(output_dir, "summary.json"),
-    )
+    problem_summary = {
+        "run_id": run_id,
+        "dataset": dataset_name,
+        "method": method_name,
+        "total_problems": summary["total"],
+        "num_pass": summary["passed"],
+        "pass_at_1": summary["pass@1"],
+        "execution_success_rate": summary["execution_success_rate"],
+        "conditional_pass": summary["conditional_pass"],
+        "avg_tokens": avg_tokens,
+        "avg_latency": avg_latency,
+        "avg_calls": avg_calls,
+        "extra_summary": extra_summary,
+    }
+
+    # 7. Run-level analysis summary
+    transition_counts = {}
+    failure_type_counts = {}
+
+    for traj in trajectory_logs:
+        path = traj["transition_path"]
+        for j in range(len(path) - 1):
+            coarse_a = path[j].split(":")[0]
+            coarse_b = path[j + 1].split(":")[0]
+            key = f"{coarse_a}->{coarse_b}"
+            transition_counts[key] = transition_counts.get(key, 0) + 1
+
+    for step in step_logs:
+        status = step["status"]
+        if status != "PASS":
+            failure_type_counts[status] = failure_type_counts.get(status, 0) + 1
+
+    run_analysis = {
+        "run_id": run_id,
+        "dataset": dataset_name,
+        "method": method_name,
+        "transition_counts": transition_counts,
+        "failure_type_counts": failure_type_counts,
+    }
+
+    # 8. 결과 저장
+    if save_step_level:
+        save_results_jsonl(
+            step_logs,
+            os.path.join(output_dir, "step_logs.jsonl"),
+        )
+
+    if save_trajectory_level:
+        save_results_jsonl(
+            trajectory_logs,
+            os.path.join(output_dir, "trajectory_logs.jsonl"),
+        )
+
+    if save_problem_summary:
+        save_result(
+            problem_summary,
+            os.path.join(output_dir, "summary.json"),
+        )
+
+    if save_run_analysis:
+        save_result(
+            run_analysis,
+            os.path.join(output_dir, "analysis.json"),
+        )
 
 
 if __name__ == "__main__":

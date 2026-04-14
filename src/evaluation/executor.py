@@ -23,6 +23,8 @@ class ExecutionResult:
     error: Optional[str] = None
     timeout: bool = False
     error_type: Optional[str] = None
+    tests_passed: Optional[int] = None
+    tests_total: Optional[int] = None
 
 
 @dataclass
@@ -61,10 +63,6 @@ def _extract_error_type(error_text: str) -> Optional[str]:
 
 
 def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
-    """
-    주어진 전체 Python 코드를 임시 파일로 저장 후 subprocess로 실행
-    HumanEval 전용
-    """
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".py",
@@ -86,6 +84,8 @@ def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
             return ExecutionResult(
                 passed=True,
                 output=result.stdout,
+                tests_passed=1,
+                tests_total=1,
             )
 
         error_text = result.stderr.strip()
@@ -94,6 +94,8 @@ def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
             output=result.stdout,
             error=error_text,
             error_type=_extract_error_type(error_text),
+            tests_passed=0,
+            tests_total=1,
         )
 
     except subprocess.TimeoutExpired:
@@ -102,7 +104,9 @@ def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
             output="",
             error="Timeout",
             timeout=True,
-            error_type="TimeoutExpired",
+            error_type="Timeout",
+            tests_passed=0,
+            tests_total=1,
         )
     except Exception as e:
         return ExecutionResult(
@@ -110,16 +114,19 @@ def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
             output="",
             error=str(e),
             error_type=type(e).__name__,
+            tests_passed=0,
+            tests_total=1,
         )
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def execute_humaneval(
     code: str,
     test: str,
     entry_point: str,
-    timeout: int = 10,
+    timeout: int = 5,
 ) -> ExecutionResult:
     """
     HumanEval 평가:
