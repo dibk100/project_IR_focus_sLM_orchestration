@@ -14,4 +14,4 @@ coder_model:
 
 dataset : "humaneval"
 num_samples: 164          # 테스트할 문제 수 humaneval(전체: 164)
-output_dir: "results/phase1_ver2/planner_coder"
+output_dir: "results/phase1_ver2/humaneval/planner_coder"

@@ -39,6 +39,11 @@ from src.utils.prompting.planner_coder import (
     extract_planner_output,
 )
 
+import resource
+
+
+def limit_memory():
+    resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))  # 2GB 제한
 
 def load_task_and_adapter(dataset_name: str):
     """

@@ -14,4 +14,4 @@ coder_model:
 
 dataset : "mbpp"
 num_samples: 374          # 테스트할 문제 수 mbpp(전체: 374)
-output_dir: "results/phase1_ver2/planner_coder"
+output_dir: "results/phase1_ver2/mbpp/planner_coder"

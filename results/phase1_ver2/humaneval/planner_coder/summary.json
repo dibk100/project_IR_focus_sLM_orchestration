@@ -1,0 +1,28 @@
+{
+  "experiment": {
+    "phase": "phase1_easy",
+    "orchestration": "planner-coder",
+    "task": "humaneval",
+    "timestamp": "20260410_164257",
+    "config_path": "experiments/phase1_ver2/configs/humaneval_planner_coder.yaml"
+  },
+  "planner_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 256,
+    "temperature": 0.0
+  },
+  "coder_model": {
+    "name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "max_new_tokens": 512,
+    "temperature": 0.0
+  },
+  "summary": {
+    "total": 164,
+    "passed": 134,
+    "exec_success": 152,
+    "pass@1": 0.8170731707317073,
+    "execution_success_rate": 0.926829268292683,
+    "conditional_pass": 0.881578947368421
+  },
+  "extra_summary": {}
+}

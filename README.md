@@ -1,8 +1,27 @@
 # project_IR_focus_sLM_orchestration 🚀
 - **Type**: 개인 연구 프로젝트 (Independent Research)
 - **Area** : sLM orchestration, 구조 설계 연구
-- **Main Research Questions** : 작은 모델의 한계를 agentic orchestration으로 얼마나 보완할 수 있는가? scale 부족을 system design으로 대체할 수 있는가?    
-*오케스트레이션 구조란, 작은 모델을 여러 역할과 단계로 나누어 반복적으로 사용하는 실행 설계이며, 이를 통해 단일 호출의 한계를 극복하는 시스템적 방법이다
+- **Main Research Questions** : 작은 모델의 한계를 agentic orchestration으로 얼마나 보완할 수 있는가? scale 부족을 system-level orchestration으로 어느 수준까지 보완할 수 있는가?   
+> 작은 언어 모델의 한계를 보완하기 위해, 다양한 오케스트레이션 정책이 어떤 작업 환경에서 어떻게 작동하는지를 분석한다.   
+
+*오케스트레이션은 여러 번의 모델 호출을 중간 상태와 피드백을 활용하여 구조적으로 연결하는 시스템 설계이다.   
+*(수정)오케스트레이션은 𝑂=(𝑆,𝑇,𝜋)로 정의되며, 여기서 S는 상태 공간, T는 상태 변환 연산(모델 호출 및 실행), π는 이들의 순서와 조건을 결정하는 제어 정책이다.
+
+## Contribution(초안)
+(1) Orchestration을 policy로 재정의 :(S, T, π) framing   
+(2) 성능을 구조적으로 분해 : execution vs correctness   
+(3) Policy × Environment 분석
+언제 어떤 구조가 필요한지   
+
+## ISSUE
+- environment에 대한 정의 부족   
+(A) difficulty   
+정의: baseline pass@1   
+(B) error structure   
+exec failure 비율 vs assert failure 비율   
+(C) feedback availability   
+execution 가능 여부   
+
 
 ## Notes & Idea
 - 평가를 decomposition
@@ -52,9 +71,6 @@ orchestration → conditional pass ↑ ? (의미 개선)
 
 </details>
 
-
-
-
 ## Overview 📝
 본 레포지토리는 소형 언어 모델(sLM)의 성능을 향상시키기 위한 agentic orchestration 전략을 연구한다.
 대형 언어 모델이 모델 크기(scale)에 의존하는 것과 달리, 본 연구는 시스템 수준의 orchestration 설계가 작은 모델의 성능을 얼마나 끌어올릴 수 있는지를 탐구한다.    
@@ -69,9 +85,12 @@ orchestration → conditional pass ↑ ? (의미 개선)
 - system design으로 scale을 얼마나 대체할 수 있는지를 정량적으로 규명
 
 ## Research Questions
-RQ1: sLM에 orchestration을 적용하면, 단일 호출(single-call) 대비 sLM 성능을 얼마나 향상시키는가?    
-RQ2: 어떤 orchestration 구조가 sLM 성능을 가장 효과적으로 증폭시키고, 비용 대비 효율적인가?    
-RQ3: 오케스트레이션을 적용한 sLM은 더 큰 모델(single-shot)과 비교했을 때 어느 수준까지 성능 격차를 줄일 수 있는가?
+RQ1: sLM에서 orchestration은 single-shot 대비 성능을 얼마나 향상시키는가?    
+RQ2: 동일하거나 유사한 inference budget 하에서, 어떤 orchestration 구조가 가장 높은 성능 향상을 제공하는가?    
+RQ3: 각 orchestration 구조는 오류 유형 중 무엇을 주로 줄이는가?   
+- execution failure
+- logical failure
+- spec misunderstanding
 
 ## Methodology
 - Task: 코드 생성 및 수정 (Code Generation / Editing)
