@@ -49,48 +49,77 @@ class HumanEvalAdapter(BaseAdapter):
 
     def classify_execution(self, exec_result: ExecutionResult) -> Dict[str, Any]:
         """
-        HumanEval execution 결과를 공통 포맷으로 변환
+        HumanEval execution 결과를 ver3 공통 포맷으로 변환한다.
 
-        현재 HumanEval executor는 staged execution이 아니므로
-        practical rule을 사용한다:
-        - passed=True -> pass
-        - timeout=True -> timeout
-        - AssertionError -> exec_success=True, fail
-        - 그 외 -> exec_success=False, fail
+        상태 규칙:
+        - passed=True                     -> PASS
+        - timeout=True                    -> EXEC_FAIL:Timeout
+        - AssertionError                  -> TEST_FAIL:AssertionError
+        - 그 외 실행 예외                 -> EXEC_FAIL:<ErrorType>
         """
         if exec_result.passed:
             return {
-                "status": "pass",
+                "status": "PASS",
                 "passed": True,
-                "exec_success": True,
+                "exec_ok": True,
+                "test_pass": True,
                 "error_type": None,
+                "error_stage": None,
                 "error_message": None,
+                "tests_passed": None,
+                "tests_total": None,
                 "meta": {
                     "timeout": False,
+                    "raw_error_type": None,
                 },
             }
 
         if exec_result.timeout:
             return {
-                "status": "timeout",
+                "status": "EXEC_FAIL:Timeout",
                 "passed": False,
-                "exec_success": False,
-                "error_type": "timeout",
+                "exec_ok": False,
+                "test_pass": False,
+                "error_type": "Timeout",
+                "error_stage": "exec",
                 "error_message": exec_result.error,
+                "tests_passed": None,
+                "tests_total": None,
                 "meta": {
                     "timeout": True,
+                    "raw_error_type": exec_result.error_type,
                 },
             }
 
         error_type = self._normalize_error_type(exec_result.error_type, exec_result.error)
-        exec_success = exec_result.error_type == "AssertionError"
+
+        if error_type == "AssertionError":
+            return {
+                "status": "TEST_FAIL:AssertionError",
+                "passed": False,
+                "exec_ok": True,
+                "test_pass": False,
+                "error_type": "AssertionError",
+                "error_stage": "test",
+                "error_message": exec_result.error,
+                "tests_passed": None,
+                "tests_total": None,
+                "meta": {
+                    "timeout": False,
+                    "raw_error_type": exec_result.error_type,
+                },
+            }
 
         return {
-            "status": "fail",
+            "status": f"EXEC_FAIL:{error_type}",
             "passed": False,
-            "exec_success": exec_success,
+            "exec_ok": False,
+            "test_pass": False,
             "error_type": error_type,
+            "error_stage": "exec",
             "error_message": exec_result.error,
+            "tests_passed": None,
+            "tests_total": None,
             "meta": {
                 "timeout": False,
                 "raw_error_type": exec_result.error_type,
@@ -101,46 +130,46 @@ class HumanEvalAdapter(BaseAdapter):
         if error_type:
             lowered = error_type.lower()
             if lowered == "syntaxerror":
-                return "syntax_error"
+                return "SyntaxError"
             if lowered == "assertionerror":
-                return "assertion_error"
+                return "AssertionError"
             if lowered == "typeerror":
-                return "type_error"
+                return "TypeError"
             if lowered == "nameerror":
-                return "name_error"
+                return "NameError"
             if lowered == "indexerror":
-                return "index_error"
+                return "IndexError"
             if lowered == "keyerror":
-                return "key_error"
+                return "KeyError"
             if lowered == "valueerror":
-                return "value_error"
+                return "ValueError"
             if lowered == "attributeerror":
-                return "attribute_error"
+                return "AttributeError"
             if lowered in ("importerror", "modulenotfounderror"):
-                return "import_error"
+                return "ImportError"
 
         if error_message:
             lowered = error_message.lower()
             if "syntaxerror" in lowered:
-                return "syntax_error"
+                return "SyntaxError"
             if "assertionerror" in lowered:
-                return "assertion_error"
+                return "AssertionError"
             if "typeerror" in lowered:
-                return "type_error"
+                return "TypeError"
             if "nameerror" in lowered:
-                return "name_error"
+                return "NameError"
             if "indexerror" in lowered:
-                return "index_error"
+                return "IndexError"
             if "keyerror" in lowered:
-                return "key_error"
+                return "KeyError"
             if "valueerror" in lowered:
-                return "value_error"
+                return "ValueError"
             if "attributeerror" in lowered:
-                return "attribute_error"
+                return "AttributeError"
             if "importerror" in lowered or "modulenotfounderror" in lowered:
-                return "import_error"
+                return "ImportError"
 
-        return "runtime_error"
+        return "RuntimeError"
     
     def extract_code_for_planner(self, sample, raw_output: str) -> str:
         return extract_humaneval_full_function_code(
