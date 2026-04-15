@@ -1,0 +1,43 @@
+# Phase 1 ver3: HumanEval Planner-Coder-Repair
+# 흐름: Plan(1회) → Generate(1회) → Repair(최대 2회) = 최대 4 calls
+#
+# 사용법:
+# PYTHONPATH=. python -m src.orchestration.planner_coder_repair \
+#   experiments/phase1_ver3/configs/humaneval_planner_coder_repair.yaml
+
+run:
+  run_id: "phase1_qwen25coder7b_humaneval_planner_coder_repair"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  temperature: 0.2
+  planner:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "planner_coder_repair"
+
+budget:
+  max_repair: 2       # repair 최대 횟수 (초기 generate 제외)
+  max_calls: 4        # 참고용: 1(plan) + 1(gen) + 2(repair)
+
+output:
+  dir: "results/phase1_ver3/humaneval/planner_coder_repair"
+
+logging:
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: true
+  save_code: true
