@@ -38,7 +38,8 @@ from src.evaluation.metrics import (
     summarize_mbpp_failure_breakdown,
 )
 
-from src.utils.io import save_result, save_results_jsonl
+import torch
+from src.utils.io import save_result, save_results_jsonl, append_jsonl
 
 
 def load_task_and_adapter(dataset_name: str):
@@ -152,9 +153,23 @@ def run_retry(config_path: str):
     print("✅ 모델 로딩 완료")
 
     # ── 4. 실험 실행 ──
-    step_logs = []
-    trajectory_logs = []
+    # step_logs / trajectory_logs는 메모리 누적 대신 즉시 파일에 기록 (OOM 방지)
+    step_log_path = os.path.join(output_dir, "step_logs.jsonl")
+    trajectory_log_path = os.path.join(output_dir, "trajectory_logs.jsonl")
+
+    if save_step_level and os.path.exists(step_log_path):
+        os.remove(step_log_path)
+    if save_trajectory_level and os.path.exists(trajectory_log_path):
+        os.remove(trajectory_log_path)
+
     eval_results = []
+    written_steps = 0
+    written_trajectories = 0
+    transition_counts = {}
+    failure_type_counts = {}
+    sum_tokens = 0.0
+    sum_latency = 0.0
+    sum_calls = 0
 
     samples_to_run = min(num_samples, len(task))
 
@@ -264,7 +279,9 @@ def run_retry(config_path: str):
             if hasattr(sample, "entry_point"):
                 step_entry["entry_point"] = sample.entry_point
 
-            step_logs.append(step_entry)
+            if save_step_level:
+                append_jsonl(step_entry, step_log_path)
+                written_steps += 1
 
             pretty_status = (
                 "✅ PASS"
@@ -315,7 +332,30 @@ def run_retry(config_path: str):
             },
         }
 
-        trajectory_logs.append(trajectory_entry)
+        if save_trajectory_level:
+            append_jsonl(trajectory_entry, trajectory_log_path)
+            written_trajectories += 1
+
+        # avg 누적
+        sum_tokens += trajectory_entry["total_tokens"]
+        sum_latency += trajectory_entry["total_latency"]
+        sum_calls += trajectory_entry["call_count"]
+
+        # run-level analysis 집계
+        path = trajectory_entry["transition_path"]
+        for j in range(len(path) - 1):
+            coarse_a = path[j].split(":")[0]
+            coarse_b = path[j + 1].split(":")[0]
+            key = f"{coarse_a}->{coarse_b}"
+            transition_counts[key] = transition_counts.get(key, 0) + 1
+
+        status = step_entry["status"]
+        if status != "PASS":
+            failure_type_counts[status] = failure_type_counts.get(status, 0) + 1
+
+        # CUDA 캐시 비우기 (OOM 방지)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # ── 5. 결과 요약 ──
     summary = summarize_phase1_results(eval_results)
@@ -342,18 +382,10 @@ def run_retry(config_path: str):
         print(f"{'=' * 60}")
 
     # ── 6. Problem-level summary ──
-    avg_tokens = (
-        sum(x["total_tokens"] for x in trajectory_logs) / len(trajectory_logs)
-        if trajectory_logs else 0.0
-    )
-    avg_latency = (
-        sum(x["total_latency"] for x in trajectory_logs) / len(trajectory_logs)
-        if trajectory_logs else 0.0
-    )
-    avg_calls = (
-        sum(x["call_count"] for x in trajectory_logs) / len(trajectory_logs)
-        if trajectory_logs else 0.0
-    )
+    n = len(eval_results)
+    avg_tokens = sum_tokens / n if n else 0.0
+    avg_latency = sum_latency / n if n else 0.0
+    avg_calls = sum_calls / n if n else 0.0
 
     problem_summary = {
         "run_id": run_id,
@@ -370,23 +402,7 @@ def run_retry(config_path: str):
         "extra_summary": extra_summary,
     }
 
-    # ── 7. Run-level analysis summary ──
-    transition_counts = {}
-    failure_type_counts = {}
-
-    for traj in trajectory_logs:
-        path = traj["transition_path"]
-        for j in range(len(path) - 1):
-            coarse_a = path[j].split(":")[0]
-            coarse_b = path[j + 1].split(":")[0]
-            key = f"{coarse_a}->{coarse_b}"
-            transition_counts[key] = transition_counts.get(key, 0) + 1
-
-    for step in step_logs:
-        status = step["status"]
-        if status != "PASS":
-            failure_type_counts[status] = failure_type_counts.get(status, 0) + 1
-
+    # ── 7. Run-level analysis summary (루프 중 이미 집계됨) ──
     run_analysis = {
         "run_id": run_id,
         "dataset": dataset_name,
@@ -396,17 +412,12 @@ def run_retry(config_path: str):
     }
 
     # ── 8. 결과 저장 ──
+    # step_logs / trajectory_logs는 루프 중 streaming으로 이미 기록됨
     if save_step_level:
-        save_results_jsonl(
-            step_logs,
-            os.path.join(output_dir, "step_logs.jsonl"),
-        )
+        print(f"💾 step_logs 기록 완료: {step_log_path} ({written_steps}건)")
 
     if save_trajectory_level:
-        save_results_jsonl(
-            trajectory_logs,
-            os.path.join(output_dir, "trajectory_logs.jsonl"),
-        )
+        print(f"💾 trajectory_logs 기록 완료: {trajectory_log_path} ({written_trajectories}건)")
 
     if save_problem_summary:
         save_result(
