@@ -2,58 +2,9 @@
 - **Type**: 개인 연구 프로젝트 (Independent Research)
 - **Area** : sLM orchestration, 구조 설계 연구
 - **Main Research Questions** : 작은 모델의 한계를 agentic orchestration으로 얼마나 보완할 수 있는가? scale 부족을 system design으로 대체할 수 있는가?    
-*오케스트레이션 구조란, 작은 모델을 여러 역할과 단계로 나누어 반복적으로 사용하는 실행 설계이며, 이를 통해 단일 호출의 한계를 극복하는 시스템적 방법이다
 
 ## Notes & Idea
-- 평가를 decomposition
-<details>
-<summary><strong> 실험 metric 설계 </strong></summary>
-
-## pass@1 : 
-- 문제 당 1개 생성했을 때, 성공 확률   
-pass@1 = pass = structure 성공 + semantics 성공
-
-하지만 아래와 같은 실패 구조를 가지고 있다.
-```
-fail →
-    ├─ exec 실패 → structural failure
-    └─ assert 실패 → semantic failure
-```
-
-지표를 3가지로 쪼개보고자 함.   
-## IDEA
-(1) execution success rate : **strutural**   
-exec(code) 성공 비율(코드 실행)
-
-(2) pass rate : **overall**   
-test 통과 비율(코드 실행 + test 성공)
-
-(3) conditional pass : **semantic**   
-pass/exec_success   
-실행 가능한 코드 중에서, 실제로 정답인 비율
-
-```
-전체 시도
-│
-├─ execution failure
-│   ├─ code stage failure
-│   └─ setup stage failure
-│
-└─ execution success
-    │
-    ├─ semantic failure (assert fail)
-    └─ pass
-```
-
-
-orchestration → exec success ↑ ? (구조 개선)   
-orchestration → pass ↑ ? (전체 성능)   
-orchestration → conditional pass ↑ ? (의미 개선)   
-
-</details>
-
-
-
+이동   
 
 ## Overview 📝
 본 레포지토리는 소형 언어 모델(sLM)의 성능을 향상시키기 위한 agentic orchestration 전략을 연구한다.
@@ -69,15 +20,15 @@ orchestration → conditional pass ↑ ? (의미 개선)
 - system design으로 scale을 얼마나 대체할 수 있는지를 정량적으로 규명
 
 ## Research Questions
-RQ1: sLM에서 orchestration은 single-shot 대비 성능을 얼마나 향상시키는가?
-RQ2: 동일하거나 유사한 inference budget 하에서, 어떤 orchestration 구조가 가장 높은 성능 향상을 제공하는가?
-RQ3: 각 orchestration 구조는 오류 유형 중 무엇을 주로 줄이는가?
+RQ1: sLM에서 orchestration은 single-shot 대비 성능을 얼마나 향상시키는가?   
+RQ2: 동일하거나 유사한 inference budget 하에서, 어떤 orchestration 구조가 가장 높은 성능 향상을 제공하는가?   
+RQ3: 각 orchestration 구조는 오류 유형 중 무엇을 주로 줄이는가?   
 - execution failure
 - logical failure
 - spec misunderstanding
 
 ## Methodology
-- Task: 코드 생성 및 수정 (Code Generation / Editing)
+- Task: 코드 생성 및 수정 (Code Generation / Editing, Repair)
     - HumanEval, MBPP: **기본 작동 여부 확인용**
     - HumanEval Pro, MBPP Pro: **난이도 상승 시 robustness 확인용**
     - (고민)SWE-bench-lite subset: **확장 가능성 점검용**
@@ -86,28 +37,23 @@ RQ3: 각 orchestration 구조는 오류 유형 중 무엇을 주로 줄이는가
     - 다양한 orchestration 구조를 설계하고, 각 구조가 sLM 성능을 얼마나 증폭시키는지와 더 큰 LLM 대비 격차를 얼마나 줄이는지를 비교 분석
 
 ## 🧪 Experimental Design
-- Phase 1 : Easy Code Generation (HumanEval)
+- Phase 1 : Easy Code Generation (HumanEval, MBPP)
     - 목적: core 실험 설계 + baseline + orchestration 효과 확인
+        - single-shot vs multi-step
     - Dataset: HumanEval (164 problems), MBPP (364 problems)
     - 비교 대상:
-        1. Single-shot (baseline, G)
-        2. retry-only (G + R)
-        3. Repair loop (G + V + R)
-        4. Planner-Coder (D → G)
-    - 주요 평가 지표: Pass@1, Latency, Gain vs Single, execution success rate, conditional pass
-    - 연구 질문 (Phase 1 RQ):
-        - 단순 single-shot generation 대비 orchestration은 어떤 방식으로 성능을 개선하는가?
-        - 어떤 구조가 가장 큰 성능 증폭을 제공하는가?
-        - 성능 향상 대비 비용은 어떻게 변화하는가?
+        - Level 1 (기본)
+            - Single-shot (fixed compute)
+        - Level 2 (비구조적)
+            - Retry
+            - Best-of-N
+        - Level 3 (구조적)
+            - Repair
+            - Planner
 
 - Phase 2(초안) : Harder Tasks / Structure Comparison
-    - 목적: 난이도가 높은 태스크에서 Phase 1에서 확인된 orchestration 구조의 효력 검증
-    - Dataset: MBPP 또는 HumanEval Pro
-    - 비교 대상: Phase 1과 동일, 필요 시 hybrid orchestration 추가
-    - 연구 질문 (Phase 2 RQ):
-        - 난이도가 높은 태스크에서 Phase 1에서 확인된 orchestration 구조가 얼마나 일반화되는가?
-        - 구조별 성능 차이는 난이도에 따라 어떻게 달라지는가?
-        - Hybrid orchestration 조합은 기존 구조 대비 성능 향상에 기여하는가?
+    - 목적 :
+        - unstructured vs structured
 
 - Phase 3(초안) : Scaling / sLM vs LLM
     - 목적: Phase 1~2에서 검증된 orchestration 구조가 더 큰 모델과 비교했을 때 성능 격차를 얼마나 줄이는지 평가

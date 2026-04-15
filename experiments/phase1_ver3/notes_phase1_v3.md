@@ -70,6 +70,16 @@ Planner-Coder: Problem -> D -> G -> Evaluate
 Planner+Repair: Problem -> D -> G -> V -> R -> Evaluate
 ```
 
+#### 비교 대상:
+- Level 1 (기본)
+    - Single-shot (fixed compute)
+- Level 2 (비구조적)
+    - Retry
+    - Best-of-N
+- Level 3 (구조적)
+    - Repair
+    - Planner
+
 ### Metrics
 #### Performance
 - Pass@1 (= overall pass rate) : 정답 비율
