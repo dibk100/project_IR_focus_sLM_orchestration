@@ -1,14 +1,14 @@
-# Phase 1: HumanEval Best-of-N
+# Phase 1: MBPP Best-of-N
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.best_of_n experiments/phase1_ver3/configs/humaneval_bestOfN.yaml
+# PYTHONPATH=. python -m src.orchestration.best_of_n experiments/phase1_ver3/configs/mbpp_bestOfN.yaml
 
 run:
-  run_id: "phase1_qwen25coder7b_humaneval_bestofn"
+  run_id: "phase1_qwen25coder7b_mbpp_bestofn"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "mbpp"
+  num_samples: 374
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -27,7 +27,7 @@ budget:
   max_calls: 3
 
 output:
-  dir: "results/phase1_ver3/humaneval/bestofn"
+  dir: "results/phase1_ver3/mbpp/bestofn"
 
 logging:
   save_step_level: true

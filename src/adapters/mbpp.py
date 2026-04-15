@@ -49,47 +49,104 @@ class MBPPAdapter(BaseAdapter):
 
     def classify_execution(self, exec_result: MBPPExecutionTrace) -> Dict[str, Any]:
         """
-        MBPP staged execution 결과를 공통 포맷으로 변환
+        MBPP staged execution 결과를 ver3 공통 포맷으로 변환한다.
+
+        상태 규칙:
+        - passed=True                                          -> PASS
+        - failed_stage == "code" or "setup"                    -> EXEC_FAIL:<ErrorType>
+        - failed_stage == "test" and AssertionError             -> TEST_FAIL:AssertionError
+        - failed_stage == "test" and 그 외                      -> EXEC_FAIL:<ErrorType>
 
         execution success 정의:
         - code_exec_passed and setup_exec_passed
-
-        semantic failure:
-        - failed_stage == "test" and error_type == "AssertionError"
         """
+        base_meta = {
+            "code_exec_passed": exec_result.code_exec_passed,
+            "setup_exec_passed": exec_result.setup_exec_passed,
+            "test_exec_passed": exec_result.test_exec_passed,
+            "failed_stage": exec_result.failed_stage,
+            "failed_test_index": exec_result.failed_test_index,
+            "raw_error_type": exec_result.error_type,
+        }
+
         if exec_result.passed:
             return {
-                "status": "pass",
+                "status": "PASS",
                 "passed": True,
-                "exec_success": True,
+                "exec_ok": True,
+                "test_pass": True,
                 "error_type": None,
+                "error_stage": None,
                 "error_message": None,
-                "meta": {
-                    "code_exec_passed": True,
-                    "setup_exec_passed": True,
-                    "test_exec_passed": True,
-                    "failed_stage": None,
-                    "failed_test_index": None,
-                },
+                "tests_passed": len(base_meta.get("failed_test_index", []) or []) if False else None,
+                "tests_total": None,
+                "meta": base_meta,
             }
 
         error_type = self._normalize_error_type(exec_result.error_type, exec_result.failed_stage)
-        exec_success = exec_result.code_exec_passed and exec_result.setup_exec_passed
+        exec_ok = exec_result.code_exec_passed and exec_result.setup_exec_passed
 
+        # failed_stage에 따라 status/error_stage 결정
+        failed_stage = exec_result.failed_stage
+
+        if failed_stage in ("code", "setup"):
+            # 코드 실행 자체가 실패
+            return {
+                "status": f"EXEC_FAIL:{error_type}",
+                "passed": False,
+                "exec_ok": False,
+                "test_pass": False,
+                "error_type": error_type,
+                "error_stage": "exec",
+                "error_message": exec_result.error,
+                "tests_passed": None,
+                "tests_total": None,
+                "meta": base_meta,
+            }
+
+        if failed_stage == "test":
+            # 테스트 단계에서 실패
+            if exec_result.error_type and "assertion" in exec_result.error_type.lower():
+                # AssertionError = 실행은 됐지만 테스트 실패 (semantic failure)
+                return {
+                    "status": "TEST_FAIL:AssertionError",
+                    "passed": False,
+                    "exec_ok": True,
+                    "test_pass": False,
+                    "error_type": "AssertionError",
+                    "error_stage": "test",
+                    "error_message": exec_result.error,
+                    "tests_passed": exec_result.failed_test_index,
+                    "tests_total": None,
+                    "meta": base_meta,
+                }
+            else:
+                # 테스트 중 실행 에러 (NameError, TypeError 등)
+                return {
+                    "status": f"EXEC_FAIL:{error_type}",
+                    "passed": False,
+                    "exec_ok": exec_ok,
+                    "test_pass": False,
+                    "error_type": error_type,
+                    "error_stage": "test",
+                    "error_message": exec_result.error,
+                    "tests_passed": exec_result.failed_test_index,
+                    "tests_total": None,
+                    "meta": base_meta,
+                }
+
+        # fallback
         return {
-            "status": "fail",
+            "status": f"EXEC_FAIL:{error_type}",
             "passed": False,
-            "exec_success": exec_success,
+            "exec_ok": False,
+            "test_pass": False,
             "error_type": error_type,
+            "error_stage": "exec",
             "error_message": exec_result.error,
-            "meta": {
-                "code_exec_passed": exec_result.code_exec_passed,
-                "setup_exec_passed": exec_result.setup_exec_passed,
-                "test_exec_passed": exec_result.test_exec_passed,
-                "failed_stage": exec_result.failed_stage,
-                "failed_test_index": exec_result.failed_test_index,
-                "raw_error_type": exec_result.error_type,
-            },
+            "tests_passed": None,
+            "tests_total": None,
+            "meta": base_meta,
         }
 
     def _normalize_error_type(self, error_type: str | None, failed_stage: str | None) -> str:

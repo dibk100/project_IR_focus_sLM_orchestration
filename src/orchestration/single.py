@@ -111,11 +111,13 @@ def run_single_shot(config_path: str):
     print("=" * 60)
     print("📋 Single-Shot Baseline 실험")
     print("=" * 60)
-    print(f"run_id      : {run_id}")
-    print(f"dataset     : {dataset_name}")
-    print(f"method      : {method_name}")
-    print(f"seed        : {seed}")
-    print(f"output_dir  : {output_dir}")
+    print(f"run_id              : {run_id}")
+    print(f"dataset             : {dataset_name}")
+    print(f"method              : {method_name}")
+    print(f"max_new_tokens      : {max_new_tokens}")
+    print(f"temperature         : {temperature}")
+    print(f"seed                : {seed}")
+    print(f"output_dir          : {output_dir}")
     print("=" * 60)
 
     # config snapshot 저장
