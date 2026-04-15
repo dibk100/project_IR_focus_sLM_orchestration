@@ -4,6 +4,7 @@ transformers 라이브러리를 사용하여 sLM을 로드하고 추론한다.
 """
 from __future__ import annotations
 
+import gc
 from typing import Any, Dict, Optional
 
 import torch
@@ -94,12 +95,20 @@ class HFModel(BaseModel):
             skip_special_tokens=True,
         )
 
-        return {
+        result = {
             "text": generated_text,
             "input_tokens": input_len,
             "output_tokens": output_len,
             "total_tokens": input_len + output_len,
         }
+
+        # CPU RAM 누수 방지: 텐서 명시적 해제
+        del outputs, generated_tokens, inputs
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return result
 
     def get_model_name(self) -> str:
         return self.model_name
