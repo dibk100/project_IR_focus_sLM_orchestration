@@ -14,21 +14,24 @@ dataset:
   num_samples: 374
 
 model:
-  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
-  temperature: 0.2
+  backend: vllm_server
+  api_base: "http://127.0.0.1:8000/v1"
+  api_key: "EMPTY"
+
   planner:
     name: "Qwen/Qwen2.5-Coder-7B-Instruct"
     max_new_tokens: 256
     temperature: 0.2
+
   coder:
     name: "Qwen/Qwen2.5-Coder-7B-Instruct"
     max_new_tokens: 512
     temperature: 0.2
-  # repairer는 coder와 동일하게 공유 (별도 지정 시 아래 주석 해제)
-  # repairer:
-  #   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
-  #   max_new_tokens: 512
-  #   temperature: 0.2
+
+  repairer:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
 
 method:
   name: "planner_coder_repair"

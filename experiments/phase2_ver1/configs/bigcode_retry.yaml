@@ -1,14 +1,14 @@
-# Phase 1: HumanEval Retry (Refinement-only)
+# Phase 2: BigCode Retry (Refinement-only)
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.retry experiments/phase1_ver3/configs/humaneval_retry.yaml
+# PYTHONPATH=. python -m src.orchestration.retry experiments/phase2_ver1/configs/bigcode_retry.yaml
 
 run:
-  run_id: "phase1_qwen25coder7b_humaneval_retry"
+  run_id: "phase2_qwen25coder7b_bigcode_retry"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "bigcode"
+  num_samples: 1140    # 1140
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -24,7 +24,7 @@ budget:
   max_retry: 2
 
 output:
-  dir: "results/phase1_ver3/humaneval/retry"
+  dir: "results/phase2_ver1/bigcode/retry"
 
 logging:
   save_step_level: true

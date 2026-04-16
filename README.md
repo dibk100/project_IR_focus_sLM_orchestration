@@ -96,10 +96,10 @@ project/
 │   │   └── mbpp.py
 │   ├── orchestration/       # orchestration : 전략 로직 파트
 │   │   ├── planner_coder.py 
-│   │   ├── retry.py         
-│   │   ├── repair.py        
-│   │   ├── single.py        
-│   │   └── verification.py
+│   │   ├── repair.py         
+│   │   ├── best_of_n.py        
+│   │   ├── retry.py        
+│   │   └── single.py
 │   ├── tasks/               
 │   │   ├── base.py          # task interface
 │   │   ├── mbpp.py          
