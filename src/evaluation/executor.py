@@ -42,6 +42,22 @@ class MBPPExecutionTrace:
     output: str = ""
 
 
+@dataclass
+class BigCodeExecutionTrace:
+    """BigCode용 단계별 실행 추적 결과"""
+    code_exec_passed: bool
+    setup_exec_passed: bool
+    test_exec_passed: bool
+    passed: bool
+    timeout: bool = False
+
+    failed_stage: Optional[str] = None      # "code" / "setup" / "test"
+    failed_test_index: Optional[int] = None
+    error_type: Optional[str] = None
+    error: Optional[str] = None
+    output: str = ""
+
+
 def _extract_error_type(error_text: str) -> Optional[str]:
     """
     traceback 문자열의 마지막 줄에서 Python 예외 타입을 대략 추출
@@ -326,6 +342,87 @@ def execute_mbpp_staged(
     # 모든 단계 성공
     # =========================================================
     return MBPPExecutionTrace(
+        code_exec_passed=True,
+        setup_exec_passed=True,
+        test_exec_passed=True,
+        passed=True,
+        output=stdout_buffer.getvalue(),
+    )
+    
+def execute_bigcode(
+    code: str,
+    test: str,
+    timeout: int = 5,
+) -> ExecutionResult:
+    """
+    실행 단계:
+    1. exec(code)
+    2. exec(test)
+    """
+    namespace = {}
+    stdout_buffer = io.StringIO()
+
+    if not code.strip():
+        return BigCodeExecutionTrace(
+            code_exec_passed=False,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",
+            error_type="EmptyGeneration",
+            error="Empty generation",
+            output="",
+        )
+
+    # =========================================================
+    # Stage 1: generated code 실행
+    
+    try:
+        with contextlib.redirect_stdout(stdout_buffer):
+            exec(code, namespace)
+
+        code_exec_passed = True
+        
+    except Exception:
+
+        err = traceback.format_exc()
+        return BigCodeExecutionTrace(
+            code_exec_passed=False,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",                  # 실패 단계: code
+            error_type=_extract_error_type(err), # 예외 타입 추출 (예: SyntaxError)
+            error=err,                           # 전체 traceback 저장
+            output=stdout_buffer.getvalue(),     # 지금까지 capture된 stdout
+        )
+        
+    # =========================================================
+    # Stage 2: test실행
+    # =========================================================
+    
+    try:
+        if test.strip():
+            with contextlib.redirect_stdout(stdout_buffer):
+                exec(test, namespace)
+        test_passed = True
+        
+    except Exception:
+        err = traceback.format_exc()
+        return BigCodeExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="test",                 # 실패 단계: test
+            error_type=_extract_error_type(err), # AssertionError / NameError / TypeError 등
+            error=err,
+            output=stdout_buffer.getvalue(),
+        )
+    # =========================================================
+    # 모든 단계 성공
+    # =========================================================
+    return BigCodeExecutionTrace(
         code_exec_passed=True,
         setup_exec_passed=True,
         test_exec_passed=True,

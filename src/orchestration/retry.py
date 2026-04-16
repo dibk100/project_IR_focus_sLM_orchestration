@@ -20,6 +20,7 @@ Phase1 ver3 기준:
 - HFModel.generate()의 구조화된 반환값 사용
 - step_logs / trajectory_logs / summary / analysis 저장
 """
+import gc
 import os
 import time
 import yaml
@@ -27,44 +28,14 @@ from datetime import datetime
 
 from src.models.hf_model import HFModel
 
-from src.tasks.humaneval import HumanEvalTask
-from src.tasks.mbpp import MBPPTask
-
-from src.adapters.humaneval import HumanEvalAdapter
-from src.adapters.mbpp import MBPPAdapter
-
 from src.evaluation.metrics import (
     summarize_phase1_results,
     summarize_mbpp_failure_breakdown,
 )
 
 import torch
-from src.utils.io import save_result, save_results_jsonl, append_jsonl
-
-
-def load_task_and_adapter(dataset_name: str):
-    """
-    dataset 이름에 따라 task loader와 adapter를 함께 반환
-    """
-    if dataset_name == "humaneval":
-        return HumanEvalTask(), HumanEvalAdapter()
-
-    if dataset_name == "mbpp":
-        return MBPPTask(), MBPPAdapter()
-
-    raise ValueError(f"Unsupported dataset: {dataset_name}")
-
-
-def make_run_id(config: dict) -> str:
-    """
-    run_id 자동 생성/보정
-    - config에 값이 있으면 기본값으로 사용
-    - 뒤에 timestamp를 붙여 고유하게 만듦
-    """
-    base_run_id = config.get("run", {}).get("run_id", "phase1_retry")
-    suffix = datetime.now().strftime("%m%d%H%M%S")
-    return f"{base_run_id}_{suffix}"
-
+from src.utils.io import save_result, save_results_jsonl, append_jsonl, make_run_id
+from src.utils.dataloader import load_task_and_adapter
 
 def run_retry(config_path: str):
     """Retry (refinement-only) 실험 실행"""
@@ -305,6 +276,7 @@ def run_retry(config_path: str):
                 previous_code=previous_code,
             )
 
+
         # (문제 종료) 최종 exec_result를 eval_results에 추가
         eval_results.append(exec_result)
 
@@ -356,6 +328,7 @@ def run_retry(config_path: str):
         # CUDA 캐시 비우기 (OOM 방지)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        gc.collect()
 
     # ── 5. 결과 요약 ──
     summary = summarize_phase1_results(eval_results)
@@ -371,15 +344,14 @@ def run_retry(config_path: str):
     print(f"{'=' * 60}")
 
     extra_summary = {}
-    if dataset_name == "mbpp":
-        extra_summary = summarize_mbpp_failure_breakdown(eval_results)
-        print("📌 MBPP Failure Breakdown")
-        print(f"  code_failed: {extra_summary['code_failed']}")
-        print(f"  setup_failed: {extra_summary['setup_failed']}")
-        print(f"  test_failed: {extra_summary['test_failed']}")
-        print(f"  semantic_failed: {extra_summary['semantic_failed']}")
-        print(f"  execution_failed: {extra_summary['execution_failed']}")
-        print(f"{'=' * 60}")
+    extra_summary = summarize_mbpp_failure_breakdown(eval_results)
+    print("📌 Failure Breakdown")
+    print(f"  code_failed: {extra_summary['code_failed']}")
+    print(f"  setup_failed: {extra_summary['setup_failed']}")
+    print(f"  test_failed: {extra_summary['test_failed']}")
+    print(f"  semantic_failed: {extra_summary['semantic_failed']}")
+    print(f"  execution_failed: {extra_summary['execution_failed']}")
+    print(f"{'=' * 60}")
 
     # ── 6. Problem-level summary ──
     n = len(eval_results)

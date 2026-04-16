@@ -1,40 +1,55 @@
-
-# src/utils/prompting/humaneval.py
+# src/utils/prompting/bigcode.py
 
 """
-HumanEval 전용 프롬프트 및 코드 추출 유틸리티
+BigCode 전용 프롬프트 및 코드 추출 유틸리티
 """
-from src.tasks.humaneval import HumanEvalSample
+from src.tasks.bigcode import BigCodeSample
 from .common import strip_code_fence, truncate_at_new_toplevel_block
 import re
 
 
-def build_humaneval_prompt(sample: HumanEvalSample) -> str:
+def build_bigcode_prompt(sample: BigCodeSample) -> str:
     """
-    HumanEval은 원본 prompt 자체가
-    함수 시그니처 + docstring completion 형식이라 그대로 사용
+    BigCode은 instruct_prompt에 자연어와 코드조각(import)가 있음
     """
-    return sample.prompt
+    return sample.instruct_prompt
 
 
-def extract_humaneval_code(sample: HumanEvalSample, generation: str) -> str:
-    """
-    HumanEval 생성 결과에서 함수 본문만 추출하고,
-    원본 prompt와 합쳐 실행 가능한 전체 함수 코드 생성해야함.
 
-    Args:
-        prompt: 원본 프롬프트 (함수 시그니처 + docstring)
-        generation: 모델 생성 텍스트
-    
-    Returns:
-        prompt + 추출된 함수 본문 (실행 가능한 완전한 함수)
+def extract_bigcode_code(raw_output: str) -> str:
     """
-    cleaned = strip_code_fence(generation)
-    extracted_body = truncate_at_new_toplevel_block(cleaned)
-    return sample.prompt + extracted_body
+    BigCode 모델 출력에서 실행 가능한 코드만 추출한다.
 
-def build_humaneval_repair_prompt(
-    sample: HumanEvalSample,
+    전략:
+    1. fenced code block이 여러 개 있으면 마지막 block 사용
+    2. fenced block이 없으면 def/class부터 시작하는 코드 추출
+    3. 그래도 없으면 fence 제거 후 반환
+    """
+    text = raw_output.strip()
+
+    # 1) fenced code block이 여러 개 있으면 마지막 block 선택
+    fenced_blocks = re.findall(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
+    if fenced_blocks:
+        return fenced_blocks[-1].rstrip()
+
+    # 2) fenced block이 없으면 def/class부터 코드 시작점 탐색
+    lines = text.splitlines()
+
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("def ") or line.startswith("class "):
+            start_idx = i
+            break
+
+    if start_idx is not None:
+        code_lines = lines[start_idx:]
+        return "\n".join(code_lines).rstrip()
+
+    # 3) 최후 fallback
+    return strip_code_fence(text)
+
+def build_bigcode_repair_prompt(
+    sample: BigCodeSample,
     previous_code: str,
     error_message: str | None,
 ) -> str:
@@ -55,7 +70,7 @@ Requirements:
 - Provide a complete corrected function.
 
 [Task Prompt]
-{sample.prompt}
+{sample.instruct_prompt}
 
 [Previous Solution]
 {previous_code}
@@ -66,8 +81,8 @@ Requirements:
 [Corrected Solution]
 """
 
-def build_humaneval_refinement_prompt(
-    sample: HumanEvalSample,
+def build_bigcode_refinement_prompt(
+    sample: BigCodeSample,
     previous_code: str,
 ) -> str:
     return f"""You are given a Python programming task and a previous candidate solution.
@@ -82,7 +97,7 @@ Requirements:
 - Improve the code if needed; otherwise return a clean complete solution.
 
 [Task Prompt]
-{sample.prompt}
+{sample.instruct_prompt}
 
 [Previous Solution]
 {previous_code}
@@ -90,7 +105,7 @@ Requirements:
 [Improved Solution]
 """
 
-def extract_humaneval_full_function_code(raw_output: str, entry_point: str, fallback_prompt: str) -> str:
+def extract_bigcode_full_function_code(raw_output: str, entry_point: str, fallback_prompt: str) -> str:
     """planner/coder용: raw_output에서 target 함수 전체를 추출."""
     text = raw_output.strip()
 

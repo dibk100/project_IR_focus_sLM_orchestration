@@ -76,7 +76,7 @@ Test hint:
 Previous solution:
 {previous_code}
 
-Execution error:
+Error Message:
 {error_message}
 
 Corrected code:

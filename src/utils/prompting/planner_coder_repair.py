@@ -19,31 +19,26 @@ def build_humaneval_repair_with_plan_prompt(
     HumanEval용 repair prompt (plan 포함).
     이전 코드와 에러 메시지, 그리고 원래 plan을 함께 제공.
     """
-    return f"""You are fixing a Python solution.
+    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
 
-Task:
+Your job is to repair the solution so that it passes the tests.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Keep the same function name and signature.
+- Provide a complete corrected function.
+
+[Task Prompt]
 {sample.prompt}
 
-Original Plan:
-{planner_output}
-
-Previous Code (failed):
+[Previous Solution]
 {previous_code}
 
-Error:
+[Error Message]
 {error_message}
 
-Fix the code following the original plan.
-
-Rules:
-- Output only code.
-- Do not include markdown fences.
-- Do not include explanations.
-- Keep the exact target function name and signature from the task.
-- Do not introduce helper functions unless they are fully defined in the output.
-- If imports are needed, include them explicitly.
-
-Fixed Code:
+[Corrected Solution]
 """
 
 
@@ -55,17 +50,31 @@ def build_mbpp_repair_with_plan_prompt(
 ) -> str:
     """
     MBPP용 repair prompt (plan 포함).
-    이전 코드와 에러 메시지, 그리고 원래 plan을 함께 제공.
+    이전 코드와 에러 메시지 제공.
     """
     test_hint = sample.test_list[0] if sample.test_list else ""
-    return (
-        "Fix the Python code below.\n"
-        "Follow the original plan and correct the error.\n"
-        "Use the exact function name and arguments required by the test.\n\n"
-        f"Problem:\n{sample.problem_text}\n\n"
-        f"Test hint:\n{test_hint}\n\n"
-        f"Original Plan:\n{planner_output}\n\n"
-        f"Previous Code (failed):\n{previous_code}\n\n"
-        f"Error:\n{error_message}\n\n"
-        "Fixed Code:\n"
-    )
+
+    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
+
+Your job is to repair the solution so that it passes the tests.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Keep the same function name and signature.
+- Provide a complete corrected function.
+
+[Task Prompt]
+{sample.problem_text}
+
+[Test hint]
+{test_hint}
+
+[Previous Solution]
+{previous_code}
+
+[Error Message]
+{error_message}
+
+[Corrected Solution]
+"""
