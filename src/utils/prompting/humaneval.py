@@ -60,7 +60,7 @@ Requirements:
 [Previous Solution]
 {previous_code}
 
-[Execution Error]
+[Error Message]
 {error_message}
 
 [Corrected Solution]

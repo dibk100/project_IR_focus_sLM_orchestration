@@ -47,6 +47,21 @@ DATASET_REGISTRY = {
         "split": "test",
         "save_name": "swebench_lite.jsonl",
     },
+    "bigcode": {
+        "hf_name": "bigcode/bigcodebench",
+        "split": "v0.1.0_hf",
+        "save_name": "bigcode.jsonl",
+    },
+    "livecodebench": {
+        "hf_name": "livecodebench/code_generation",
+        "split": "test",
+        "save_name": "livecodebench.jsonl",
+    },
+    "classeval": {
+        "hf_name": "FudanSELab/ClassEval",
+        "split": "test",
+        "save_name": "classeval.jsonl",
+    },
 }
 
 
@@ -71,7 +86,7 @@ def download_dataset(dataset_key: str):
 
     with open(output_path, "w", encoding="utf-8") as f:
         for item in dataset:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            f.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
 
     print(f"✅ Done! {len(dataset)} samples saved → {output_path}")
 
