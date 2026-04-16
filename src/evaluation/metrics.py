@@ -30,11 +30,11 @@ Phase 1 메트릭 계산
 from typing import Any, Dict, List, Optional, Union
 from collections import Counter
 
-from src.evaluation.executor import ExecutionResult, MBPPExecutionTrace
+from src.evaluation.executor import ExecutionResult, MBPPExecutionTrace, BigCodeExecutionTrace
 
 
 # HumanEval 결과와 MBPP 결과, 그리고 ver3 dict/AttemptRecord 스타일까지 함께 다룸
-ResultType = Union[ExecutionResult, MBPPExecutionTrace, Dict[str, Any], Any]
+ResultType = Union[ExecutionResult, MBPPExecutionTrace, BigCodeExecutionTrace, Dict[str, Any], Any]
 
 
 def _get_attr(result: Any, key: str, default=None):
@@ -93,6 +93,9 @@ def is_exec_success(result: ResultType) -> bool:
             return False
 
     if isinstance(result, MBPPExecutionTrace):
+        return result.code_exec_passed and result.setup_exec_passed
+    
+    if isinstance(result, BigCodeExecutionTrace):
         return result.code_exec_passed and result.setup_exec_passed
 
     if isinstance(result, ExecutionResult):

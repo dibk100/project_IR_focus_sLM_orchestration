@@ -1,52 +1,97 @@
 """
-Planner-Coder-Repair Orchestration
+토큰을 나눠서 처리하는 것이 아닌 호출을 나눠서 처리하는 구조.
 
-흐름: Problem → D(Plan) → G(Generate) → V(Evaluate) → [R(Repair) → V] × N
-1. task 읽기
-2. Planner(Decomposer)가 구현 계획 생성          [stage="plan"]
-3. Coder(Generator)가 계획 기반 초기 코드 생성    [stage="generate"]
-4. 실행/평가 (Verification)
-5. 실패 시: (문제 + plan + 이전코드 + 에러)로 Repair prompt → 재생성  [stage="repair"]
-6. 최대 max_repair 횟수까지 반복
-7. 결과 저장
+1. Planner
+(input) -> plan출력
 
-planner_coder와의 차이:
-- planner_coder: plan 1회 + code 1회 (2 calls, repair 없음)
-- planner_coder_repair: plan 1회 + code 1회 + repair N회 (2+N calls)
+2. Coder
+(input + plan) -> 출력
 
-repair와의 차이:
-- repair: plan 없이 error feedback만 활용
-- planner_coder_repair: plan context를 repair에도 유지하여 구조 수정 가이드 제공
+3. Repair
+(문제 + plan + 이전 코드 + 에러 메시지) -> 출력 
 
-핵심:
-- Planner: max_new_tokens=256 (간결한 plan)
-- Coder (initial): max_new_tokens=512
-- Coder (repair): plan + previous_code + error_message 포함
-- step_logs / trajectory_logs / summary / analysis 저장
-
-Phase1 ver3 기준:
-- nested config 구조 사용
-- HFModel.generate()의 구조화된 반환값 사용
-- gc.collect() + cuda.empty_cache()로 OOM 방지
 """
 import gc
 import os
 import time
 import yaml
+from datetime import datetime
 
 import torch
 
 from src.models.hf_model import HFModel
+
+from src.tasks.humaneval import HumanEvalTask, HumanEvalSample
+from src.tasks.mbpp import MBPPTask, MBPPSample
+
+from src.adapters.humaneval import HumanEvalAdapter
+from src.adapters.mbpp import MBPPAdapter
 
 from src.evaluation.metrics import (
     summarize_phase1_results,
     summarize_mbpp_failure_breakdown,
 )
 
-from src.utils.io import save_result, save_results_jsonl,make_run_id, append_jsonl
-from src.utils.dataloader import load_task_and_adapter
-from src.utils.prompt_loader import build_planner_prompt_for_sample, build_coder_prompt_for_sample
-from src.utils.prompting.planner_coder import extract_planner_output
+from src.utils.io import save_result, append_jsonl
+from src.utils.prompting.planner_coder import (
+    build_humaneval_planner_prompt,
+    build_mbpp_planner_prompt,
+    build_humaneval_coder_prompt,
+    build_mbpp_coder_prompt,
+    extract_planner_output,
+)
+from src.utils.prompting.planner_coder_repair import (
+    build_humaneval_repair_with_plan_prompt,
+    build_mbpp_repair_with_plan_prompt,
+)
+
+
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
+
+def load_task_and_adapter(dataset_name: str):
+    if dataset_name == "humaneval":
+        return HumanEvalTask(), HumanEvalAdapter()
+    if dataset_name == "mbpp":
+        return MBPPTask(), MBPPAdapter()
+    raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+
+def make_run_id(config: dict) -> str:
+    base_run_id = config.get("run", {}).get("run_id", "phase1_planner_coder_repair")
+    suffix = datetime.now().strftime("%m%d%H%M%S")
+    return f"{base_run_id}_{suffix}"
+
+
+def build_planner_prompt_for_sample(sample) -> str:
+    if isinstance(sample, HumanEvalSample):
+        return build_humaneval_planner_prompt(sample)
+    if isinstance(sample, MBPPSample):
+        return build_mbpp_planner_prompt(sample)
+    raise TypeError(f"Unsupported sample type: {type(sample)}")
+
+
+def build_coder_prompt_for_sample(sample, planner_output: str) -> str:
+    if isinstance(sample, HumanEvalSample):
+        return build_humaneval_coder_prompt(sample, planner_output)
+    if isinstance(sample, MBPPSample):
+        return build_mbpp_coder_prompt(sample, planner_output)
+    raise TypeError(f"Unsupported sample type: {type(sample)}")
+
+
+def build_repair_prompt_for_sample(
+    sample, planner_output: str, previous_code: str, error_message: str
+) -> str:
+    if isinstance(sample, HumanEvalSample):
+        return build_humaneval_repair_with_plan_prompt(
+            sample, planner_output, previous_code, error_message
+        )
+    if isinstance(sample, MBPPSample):
+        return build_mbpp_repair_with_plan_prompt(
+            sample, planner_output, previous_code, error_message
+        )
+    raise TypeError(f"Unsupported sample type: {type(sample)}")
 
 
 def make_step_entry(
@@ -267,37 +312,36 @@ def run_planner_coder_repair(config_path: str):
     print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
 
     # ── 3. 모델 로드 ──
-    print(f"🔄 Planner 모델 로딩: {planner_name}")
+    common_backend = model_cfg.get("backend", "hf")
+    api_base = model_cfg.get("api_base")
+    api_key = model_cfg.get("api_key", "EMPTY")
+
     planner_model = HFModel(
         model_name=planner_name,
         max_new_tokens=planner_tokens,
         temperature=planner_temp,
+        backend=common_backend,
+        api_base=api_base,
+        api_key=api_key,
     )
 
-    if coder_name == planner_name:
-        print("✅ Coder = Planner (같은 모델, 인스턴스 공유)")
-        coder_model = planner_model
-    else:
-        print(f"🔄 Coder 모델 로딩: {coder_name}")
-        coder_model = HFModel(
-            model_name=coder_name,
-            max_new_tokens=coder_tokens,
-            temperature=coder_temp,
-        )
+    coder_model = HFModel(
+        model_name=coder_name,
+        max_new_tokens=coder_tokens,
+        temperature=coder_temp,
+        backend=common_backend,
+        api_base=api_base,
+        api_key=api_key,
+    )
 
-    if repairer_name == coder_name:
-        print("✅ Repairer = Coder (같은 모델, 인스턴스 공유)")
-        repairer_model = coder_model
-    elif repairer_name == planner_name:
-        print("✅ Repairer = Planner (같은 모델, 인스턴스 공유)")
-        repairer_model = planner_model
-    else:
-        print(f"🔄 Repairer 모델 로딩: {repairer_name}")
-        repairer_model = HFModel(
-            model_name=repairer_name,
-            max_new_tokens=repairer_tokens,
-            temperature=repairer_temp,
-        )
+    repairer_model = HFModel(
+        model_name=repairer_name,
+        max_new_tokens=repairer_tokens,
+        temperature=repairer_temp,
+        backend=common_backend,
+        api_base=api_base,
+        api_key=api_key,
+    )
 
     print("✅ 모델 로딩 완료")
 

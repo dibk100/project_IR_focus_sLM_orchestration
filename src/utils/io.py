@@ -1,7 +1,17 @@
 import os
 import json
+from datetime import datetime
 from typing import Any, Dict, List
 
+def make_run_id(config: dict) -> str:
+    """
+    run_id 자동 생성/보정
+    - config에 값이 있으면 기본값으로 사용
+    - 뒤에 timestamp를 붙여 고유하게 만듦
+    """
+    base_run_id = config.get("run", {}).get("run_id", "phase1_single")
+    suffix = datetime.now().strftime("%m%d%H%M%S")
+    return f"{base_run_id}_{suffix}"
 
 def save_result(result: Dict[str, Any], output_path: str) -> None:
     """단일 결과 JSON 저장"""
