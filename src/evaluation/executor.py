@@ -1,31 +1,27 @@
+# src/evaluation/executor.py
 """
 코드 실행기
-생성된 코드 + 테스트 케이스를 실행하여 pass/fail을 판정
-
-- HumanEval: subprocess 기반 end-to-end 실행
-- MBPP: staged exec 기반 디버깅/분석용 실행
 """
 import io
-import os
 import traceback
 import contextlib
-import subprocess
-import tempfile
 from dataclasses import dataclass
 from typing import Optional, List
-
+import unittest
 
 @dataclass
-class ExecutionResult:
-    """HumanEval용 실행 결과"""
+class HumanEvalExecutionTrace:
+    """HumanEval용 단계별 실행 추적 결과"""
+    code_exec_passed: bool
+    setup_exec_passed: bool   # exec(test) 성공 여부
+    test_exec_passed: bool    # check(candidate) 성공 여부
     passed: bool
-    output: str
-    error: Optional[str] = None
     timeout: bool = False
-    error_type: Optional[str] = None
-    tests_passed: Optional[int] = None
-    tests_total: Optional[int] = None
 
+    failed_stage: Optional[str] = None      # "code" / "define_test" / "run_test"
+    error_type: Optional[str] = None
+    error: Optional[str] = None
+    output: str = ""
 
 @dataclass
 class MBPPExecutionTrace:
@@ -35,7 +31,7 @@ class MBPPExecutionTrace:
     test_exec_passed: bool
     passed: bool
 
-    failed_stage: Optional[str] = None      # "code" / "setup" / "test"
+    failed_stage: Optional[str] = None      # "code" / "define_test" / "run_test"
     failed_test_index: Optional[int] = None
     error_type: Optional[str] = None
     error: Optional[str] = None
@@ -51,7 +47,7 @@ class BigCodeExecutionTrace:
     passed: bool
     timeout: bool = False
 
-    failed_stage: Optional[str] = None      # "code" / "setup" / "test"
+    failed_stage: Optional[str] = None      # "code" / "define_test" / "run_test"
     failed_test_index: Optional[int] = None
     error_type: Optional[str] = None
     error: Optional[str] = None
@@ -76,90 +72,159 @@ def _extract_error_type(error_text: str) -> Optional[str]:
         return last_line.split(":", 1)[0].strip()
 
     return last_line.strip()
-
-
-def _run_python_file(full_code: str, timeout: int = 10) -> ExecutionResult:
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".py",
-        delete=False,
-        encoding="utf-8",
-    ) as f:
-        f.write(full_code)
-        tmp_path = f.name
-
-    try:
-        result = subprocess.run(
-            ["python3", tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        if result.returncode == 0:
-            return ExecutionResult(
-                passed=True,
-                output=result.stdout,
-                tests_passed=1,
-                tests_total=1,
-            )
-
-        error_text = result.stderr.strip()
-        return ExecutionResult(
-            passed=False,
-            output=result.stdout,
-            error=error_text,
-            error_type=_extract_error_type(error_text),
-            tests_passed=0,
-            tests_total=1,
-        )
-
-    except subprocess.TimeoutExpired:
-        return ExecutionResult(
-            passed=False,
-            output="",
-            error="Timeout",
-            timeout=True,
-            error_type="Timeout",
-            tests_passed=0,
-            tests_total=1,
-        )
-    except Exception as e:
-        return ExecutionResult(
-            passed=False,
-            output="",
-            error=str(e),
-            error_type=type(e).__name__,
-            tests_passed=0,
-            tests_total=1,
-        )
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
 def execute_humaneval(
     code: str,
     test: str,
     entry_point: str,
-    timeout: int = 5,
-) -> ExecutionResult:
+) -> HumanEvalExecutionTrace:
     """
-    HumanEval 평가:
-    generated code + test code + check(entry_point)
-    
-    Args:
-        code: 완성된 함수 코드
-        test: HumanEval 테스트 코드 (check 함수 포함)
-        entry_point: 함수 이름
-        timeout: 실행 제한 시간 (초)
-    
-    Returns:
-        ExecutionResult
-    """
-    full_code = code + "\n" + test + f"\ncheck({entry_point})\n"
-    return _run_python_file(full_code, timeout=timeout)
+    HumanEval 확인 (staged execution)
 
+    실행 단계:
+    1. exec(code)               -> candidate 함수 정의
+    2. exec(test)               -> check 함수 정의
+    3. check(candidate)         -> assert 기반 평가
+
+    failed_stage 정의:
+    - "code"         : generated code 자체가 exec 실패
+    - "define_test"  : test/check 정의 코드 exec 실패
+    - "run_test"     : check(candidate) 실행 실패
+    """
+    namespace = {}
+    stdout_buffer = io.StringIO()
+
+    # timeout 인자는 현재 시그니처 호환용으로 유지
+    # (in-process exec에서는 실제 강제 timeout 제어는 하지 않음)
+
+    if not code.strip():
+        return HumanEvalExecutionTrace(
+            code_exec_passed=False,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",
+            error_type="EmptyGeneration",
+            error="Empty generation",
+            output="",
+        )
+
+    # =========================================================
+    # Stage 1: generated code 실행
+    # =========================================================
+    try:
+        with contextlib.redirect_stdout(stdout_buffer):
+            exec(code, namespace)
+    except Exception:
+        err = traceback.format_exc()
+        return HumanEvalExecutionTrace(
+            code_exec_passed=False,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",
+            error_type=_extract_error_type(err),
+            error=err,
+            output=stdout_buffer.getvalue(),
+        )
+
+    # entry_point 존재 확인
+    if entry_point not in namespace:
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",
+            error_type="MissingEntryPoint",
+            error=f"Entry point '{entry_point}' not found after exec(code)",
+            output=stdout_buffer.getvalue(),
+        )
+
+    candidate = namespace[entry_point]
+
+    if not callable(candidate):
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="code",
+            error_type="NonCallableEntryPoint",
+            error=f"Entry point '{entry_point}' exists but is not callable",
+            output=stdout_buffer.getvalue(),
+        )
+
+    # =========================================================
+    # Stage 2: test code 실행 (check 함수 정의)
+    # =========================================================
+    try:
+        with contextlib.redirect_stdout(stdout_buffer):
+            exec(test, namespace)
+    except Exception:
+        err = traceback.format_exc()
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=False,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type=_extract_error_type(err),
+            error=err,
+            output=stdout_buffer.getvalue(),
+        )
+
+    if "check" not in namespace:
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type="MissingCheckFunction",
+            error="check function not found after exec(test)",
+            output=stdout_buffer.getvalue(),
+        )
+
+    check_fn = namespace["check"]
+
+    if not callable(check_fn):
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type="NonCallableCheckFunction",
+            error="'check' exists after exec(test) but is not callable",
+            output=stdout_buffer.getvalue(),
+        )
+
+    # =========================================================
+    # Stage 3: check(candidate) 실행
+    # =========================================================
+    try:
+        with contextlib.redirect_stdout(stdout_buffer):
+            check_fn(candidate)
+    except Exception:
+        err = traceback.format_exc()
+        return HumanEvalExecutionTrace(
+            code_exec_passed=True,
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="run_test",
+            error_type=_extract_error_type(err),
+            error=err,
+            output=stdout_buffer.getvalue(),
+        )
+
+    return HumanEvalExecutionTrace(
+        code_exec_passed=True,
+        setup_exec_passed=True,
+        test_exec_passed=True,
+        passed=True,
+        output=stdout_buffer.getvalue(),
+    )
 
 def execute_mbpp_staged(
     code: str,
@@ -167,12 +232,17 @@ def execute_mbpp_staged(
     test_setup_code: str = "",
 ) -> MBPPExecutionTrace:
     """
-    MBPP 평가 (Phase 1 분석용 staged execution)
+    MBPP 확인 (staged execution)
 
     실행 단계:
     1. exec(code)
     2. exec(test_setup_code)   # 있을 경우
     3. for test_case in test_list: exec(test_case)
+    
+    failed_stage 정의:
+    - "code"         : generated code 자체가 exec 실패
+    - "define_test"  : test/check 정의 코드 exec 실패
+    - "run_test"     : 개별 test assertion 실행 실패
 
     반환:
     - 어느 단계에서 실패했는지
@@ -300,7 +370,7 @@ def execute_mbpp_staged(
             setup_exec_passed=False,
             test_exec_passed=False,
             passed=False,
-            failed_stage="setup",
+            failed_stage="define_test",
             error_type=_extract_error_type(err),
             error=err,
             output=stdout_buffer.getvalue(),
@@ -332,7 +402,7 @@ def execute_mbpp_staged(
             setup_exec_passed=True,
             test_exec_passed=False,
             passed=False,
-            failed_stage="test",                 # 실패 단계: test
+            failed_stage="run_test",                 # 실패 단계: test
             failed_test_index=idx,               # 몇 번째 테스트에서 실패했는지
             error_type=_extract_error_type(err), # AssertionError / NameError / TypeError 등
             error=err,
@@ -352,13 +422,25 @@ def execute_mbpp_staged(
 def execute_bigcode(
     code: str,
     test: str,
-    timeout: int = 5,
-) -> ExecutionResult:
+) -> BigCodeExecutionTrace:
     """
+    BigCode 평가 (staged execution)
+
     실행 단계:
-    1. exec(code)
-    2. exec(test)
+    1. exec(code)   -> candidate 함수 정의
+    2. exec(test)   -> unittest 테스트 정의
+    3. unittest 실행 -> 실제 테스트 수행
+
+    failed_stage 정의:
+    - "code"         : generated code 자체가 exec 실패
+    - "define_test"  : test/unittest 정의 코드 exec 실패
+    - "run_test"     : unittest 실행 실패
+
+    주의:
+    - timeout 인자는 현재 시그니처 호환용으로만 유지한다.
+    - in-process exec / unittest 실행에서는 강제 timeout을 구현하지 않는다.
     """
+
     namespace = {}
     stdout_buffer = io.StringIO()
 
@@ -376,54 +458,201 @@ def execute_bigcode(
 
     # =========================================================
     # Stage 1: generated code 실행
-    
+    # =========================================================
     try:
         with contextlib.redirect_stdout(stdout_buffer):
             exec(code, namespace)
-
-        code_exec_passed = True
-        
     except Exception:
-
         err = traceback.format_exc()
         return BigCodeExecutionTrace(
             code_exec_passed=False,
             setup_exec_passed=False,
             test_exec_passed=False,
             passed=False,
-            failed_stage="code",                  # 실패 단계: code
-            error_type=_extract_error_type(err), # 예외 타입 추출 (예: SyntaxError)
-            error=err,                           # 전체 traceback 저장
-            output=stdout_buffer.getvalue(),     # 지금까지 capture된 stdout
+            failed_stage="code",
+            error_type=_extract_error_type(err),
+            error=err,
+            output=stdout_buffer.getvalue(),
         )
-        
+
     # =========================================================
-    # Stage 2: test실행
+    # Stage 2: test code 실행 (unittest class/function 정의)
     # =========================================================
-    
     try:
-        if test.strip():
-            with contextlib.redirect_stdout(stdout_buffer):
-                exec(test, namespace)
-        test_passed = True
-        
+        with contextlib.redirect_stdout(stdout_buffer):
+            exec(test, namespace)
     except Exception:
         err = traceback.format_exc()
         return BigCodeExecutionTrace(
             code_exec_passed=True,
-            setup_exec_passed=True,
+            setup_exec_passed=False,
             test_exec_passed=False,
             passed=False,
-            failed_stage="test",                 # 실패 단계: test
-            error_type=_extract_error_type(err), # AssertionError / NameError / TypeError 등
+            failed_stage="define_test",
+            error_type=_extract_error_type(err),
             error=err,
             output=stdout_buffer.getvalue(),
         )
+
+    # =========================================================
+    # Stage 2-1: TestCases 확인
+    # =========================================================
+    if "TestCases" not in namespace:
+        return BigCodeExecutionTrace(
+            code_exec_passed=True,
+            # BigCode에서는 별도 setup 단계가 없지만,
+            # 통합 trace 스키마를 맞추기 위해
+            # test definition 단계 성공 여부를 setup_exec_passed에 대응시킨다.
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type="MissingTestCases",
+            error="TestCases class not found after exec(test)",
+            output=stdout_buffer.getvalue(),
+        )
+
+    test_cls = namespace["TestCases"]
+
+    # TestCases가 존재는 하는데 class가 아닌 경우
+    # 함수나 변수로 덮어쓴 경우 -> unittest로 실행 불가능
+    if not isinstance(test_cls, type):
+        return BigCodeExecutionTrace(
+            code_exec_passed=True,
+            # setup_exec_passed=True:
+            # exec(test)는 끝났으므로 '테스트 정의 코드 실행' 단계 자체는 완료됨.
+            # 다만 정의된 결과물이 기대한 unittest class 구조가 아님.
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type="InvalidTestCases",
+            error="'TestCases' exists after exec(test) but is not a class",
+            output=stdout_buffer.getvalue(),
+        )
+
+    # TestCases가 class이긴 한데 unittest.TestCase를 상속하지 않은 경우
+    # unittest runner가 이걸 테스트로 인식하지 못함
+    if not issubclass(test_cls, unittest.TestCase):
+        return BigCodeExecutionTrace(
+            code_exec_passed=True,
+            # setup_exec_passed=True:
+            # test 정의 코드는 실행됐지만, unittest가 해석 가능한 테스트 클래스로
+            # 정의되지 않았으므로 define_test 단계 실패로 본다.
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="define_test",
+            error_type="InvalidTestCases",
+            error="'TestCases' exists but is not a unittest.TestCase subclass",
+            output=stdout_buffer.getvalue(),
+        )
+
+    # =========================================================
+    # Stage 3: unittest 실행
+    # =========================================================
+    try:
+        # (1) TestCases 클래스로부터 unittest 테스트 묶음(suite) 생성
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(test_cls)
+
+        # (2) 테스트가 0개면 비정상으로 간주
+        # - TestCases 클래스는 존재하지만 test_* 메서드가 하나도 없는 경우
+        # - 실제 테스트가 전혀 수행되지 않으므로 통과로 보면 안 됨
+        if suite.countTestCases() == 0:
+            return BigCodeExecutionTrace(
+                code_exec_passed=True,
+                # BigCode에서는 별도 setup 단계가 없으므로,
+                # 여기의 True는 test definition 단계가 끝났음을 뜻하는 placeholder다.
+                setup_exec_passed=True,
+                test_exec_passed=False,
+                passed=False,
+                failed_stage="define_test",
+                error_type="NoTestCases",
+                error="No test methods found in TestCases",
+                output=stdout_buffer.getvalue(),
+            )
+
+        # (3) unittest 실행 결과 로그를 저장할 버퍼
+        run_stream = io.StringIO()
+        runner = unittest.TextTestRunner(stream=run_stream, verbosity=0)
+
+        # (4) 실제 테스트 실행
+        with contextlib.redirect_stdout(stdout_buffer):
+            result = runner.run(suite)
+
+        # (5) 테스트 실패/에러가 하나라도 있으면 run_test 실패
+        if not result.wasSuccessful():
+            details = run_stream.getvalue().strip()
+
+            # multiple failure / error 수집
+            error_traces = [tb for _, tb in result.errors]
+            failure_traces = [tb for _, tb in result.failures]
+
+            # error_type은 대표 원인 1개를 뽑아 저장
+            # - errors가 있으면 runtime error를 우선 대표값으로 사용
+            # - 없고 failures만 있으면 첫 번째 assertion failure를 사용
+            if error_traces:
+                error_type = _extract_error_type(error_traces[0])
+            elif failure_traces:
+                error_type = _extract_error_type(failure_traces[0])
+            else:
+                error_type = "TestFailure"
+
+            # 전체 실패 내용을 하나의 문자열로 합쳐 저장
+            # 나중에 디버깅할 때 첫 실패만 보는 것보다 훨씬 유용하다.
+            sections = []
+
+            if error_traces:
+                sections.append("[unittest errors]")
+                sections.extend(error_traces)
+
+            if failure_traces:
+                sections.append("[unittest failures]")
+                sections.extend(failure_traces)
+
+            if details:
+                sections.append("[unittest summary]")
+                sections.append(details)
+
+            error_text = "\n\n".join(sections).strip()
+            if not error_text:
+                error_text = "unittest reported failure without details"
+
+            return BigCodeExecutionTrace(
+                code_exec_passed=True,
+                # setup_exec_passed=True:
+                # test 정의 단계는 성공했고, 실제 실패는 테스트 실행(run_test)에서 발생
+                setup_exec_passed=True,
+                test_exec_passed=False,
+                passed=False,
+                failed_stage="run_test",
+                error_type=error_type,
+                error=error_text,
+                output=stdout_buffer.getvalue(),
+            )
+
+    # unittest runner 자체가 터진 경우
+    except Exception:
+        err = traceback.format_exc()
+        return BigCodeExecutionTrace(
+            code_exec_passed=True,
+            # test 정의는 끝났고, runner 수행 중 예외가 난 것으로 해석
+            setup_exec_passed=True,
+            test_exec_passed=False,
+            passed=False,
+            failed_stage="run_test",
+            error_type=_extract_error_type(err),
+            error=err,
+            output=stdout_buffer.getvalue(),
+        )
+
     # =========================================================
     # 모든 단계 성공
     # =========================================================
     return BigCodeExecutionTrace(
         code_exec_passed=True,
+        # BigCode에서 setup_exec_passed는
+        # 'test definition 단계 성공'을 의미하는 통합 스키마용 필드
         setup_exec_passed=True,
         test_exec_passed=True,
         passed=True,

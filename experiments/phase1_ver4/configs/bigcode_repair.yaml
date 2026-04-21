@@ -1,0 +1,33 @@
+# Phase 1: BigCode Repair Loop
+# 사용법:
+# PYTHONPATH=. python -m src.orchestration.repair experiments/phase2_ver1/configs/bigcode_repair.yaml
+
+run:
+  run_id: "phase1_qwen25coder7b_bigcode_repair"
+  seed: 42
+
+dataset:
+  name: "bigcode"
+  num_samples: 1140
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 1024
+  temperature: 0.2
+
+method:
+  name: "repair_loop"
+
+budget:
+  max_calls: 3
+  max_repair: 2
+
+output:
+  dir: "results/phase2_ver1/bigcode/repair"
+
+logging:
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: true
+  save_code: true

@@ -329,6 +329,9 @@ def run_repair_loop(config_path: str):
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        del gen_result, step_entry, trajectory_entry
+        del attempt_record, exec_result
         gc.collect()
 
     # ── 5. 결과 요약 ──
