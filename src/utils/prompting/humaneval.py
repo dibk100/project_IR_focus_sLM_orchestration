@@ -31,7 +31,6 @@ def extract_humaneval_code(sample: HumanEvalSample, generation: str) -> str:
     cleaned = strip_code_fence(generation)
     extracted_body = truncate_at_new_toplevel_block(cleaned)
     return sample.prompt + extracted_body
-
 def build_humaneval_repair_prompt(
     sample: HumanEvalSample,
     previous_code: str,

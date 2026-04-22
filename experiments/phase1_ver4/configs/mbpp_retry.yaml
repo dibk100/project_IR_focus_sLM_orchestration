@@ -1,6 +1,6 @@
 # Phase 1: MBPP Retry (Refinement-only)
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.retry experiments/phase1_ver3/configs/mbpp_retry.yaml
+# PYTHONPATH=. python -m src.orchestration.retry experiments/phase1_ver4/configs/mbpp_retry.yaml
 
 run:
   run_id: "phase1_qwen25coder7b_mbpp_retry"
@@ -20,11 +20,11 @@ method:
   use_previous_code: true
 
 budget:
-  max_calls: 3
-  max_retry: 2
+  max_calls: 5
+  max_retry: 5
 
 output:
-  dir: "results/phase1_ver3/mbpp/retry"
+  dir: "results/phase1_ver4/mbpp/retry"
 
 logging:
   save_step_level: true
@@ -32,3 +32,6 @@ logging:
   save_problem_summary: true
   save_run_analysis: true
   save_code: true
+
+debug : 
+  mode : "run"

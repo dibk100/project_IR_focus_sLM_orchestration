@@ -1,14 +1,14 @@
-# Phase 1: MBPP Planner-Coder
+# Phase 1: BigCode Code-Then-Plan
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.planner_coder experiments/phase1_ver4/configs/mbpp_planner_coder.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phase1_ver4/configs/bigcode_code_then_plan.yaml
 
 run:
-  run_id: "phase1_qwen25coder7b_mbpp_planner_coder"
+  run_id: "phase1_qwen25coder7b_bigcode_code_then_plan"
   seed: 42
 
 dataset:
-  name: "mbpp"
-  num_samples: 374
+  name: "bigcode"
+  num_samples: 1140
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -23,13 +23,13 @@ model:
     temperature: 0.2
 
 method:
-  name: "planner_coder"
+  name: "code_then_plan"
 
 budget:
   max_calls: 5
 
 output:
-  dir: "results/phase1_ver4/mbpp/planner_coder"
+  dir: "results/phase1_ver4/bigcode/code_then_plan"
 
 logging:
   save_step_level: true
@@ -38,5 +38,5 @@ logging:
   save_run_analysis: true
   save_code: true
 
-debug : 
-  mode : "run"
+debug:
+  mode: "run"

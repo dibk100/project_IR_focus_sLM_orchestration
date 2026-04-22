@@ -1,6 +1,6 @@
 # Phase 1: HumanEval Repair Loop
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.repair experiments/phase1_ver3/configs/humaneval_repair.yaml
+# PYTHONPATH=. python -m src.orchestration.repair experiments/phase1_ver4/configs/humaneval_repair.yaml
 
 run:
   run_id: "phase1_qwen25coder7b_humaneval_repair"
@@ -19,11 +19,11 @@ method:
   name: "repair_loop"
 
 budget:
-  max_calls: 3
-  max_repair: 2
+  max_calls: 5
+  max_repair: 5
 
 output:
-  dir: "results/phase1_ver3/humaneval/repair"
+  dir: "results/phase1_ver4/humaneval/repair"
 
 logging:
   save_step_level: true
@@ -31,3 +31,6 @@ logging:
   save_problem_summary: true
   save_run_analysis: true
   save_code: true
+
+debug : 
+  mode : "run" 
