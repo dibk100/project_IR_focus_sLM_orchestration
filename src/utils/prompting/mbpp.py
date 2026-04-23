@@ -62,10 +62,15 @@ def build_mbpp_repair_prompt(
     error_message = error_message or "Unknown execution error."
     test_hint = sample.test_list[0] if sample.test_list else ""
 
-    return f"""Write Python code only.
-Repair the previous solution so that it passes the test.
-Use the exact function name and arguments required by the test.
-Include any needed helper classes or functions.
+    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
+
+Your job is to repair the solution so that it passes the tests.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Keep the same function name and signature.
+- Provide a complete corrected function.
 
 Problem:
 {sample.problem_text}
@@ -88,10 +93,16 @@ def build_mbpp_refinement_prompt(
 ) -> str:
     test_hint = sample.test_list[0] if sample.test_list else ""
 
-    return f"""Write Python code only.
-Improve the previous solution so that it is more likely to pass the test.
-Use the exact function name and arguments required by the test.
-Include any needed helper classes or functions.
+    return f"""You are given a Python programming task and a previous candidate solution.
+
+Your job is to improve the solution so that it is more likely to be correct.
+
+Requirements:
+- Return only Python code.
+- Do not include markdown fences.
+- Do not include explanations.
+- Keep the exact target function name and signature from the task.
+- Improve the code if needed; otherwise return a clean complete solution.
 
 Problem:
 {sample.problem_text}

@@ -1,11 +1,7 @@
+# src/adapters/base.py
 """
 Dataset adapter base interface
 
-역할:
-- sample -> prompt
-- raw generation -> executable code
-- code execution
-- execution result -> orchestration-friendly dict
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -28,7 +24,7 @@ class AttemptRecord:
     raw_output: str
     generated_code: str
 
-    status: str                 # "PASS" / "EXEC_FAIL:TypeError" / "TEST_FAIL:AssertionError"
+    status: str                # "PASS" / "EXEC_FAIL:<Type>" / "DEFINE_TEST_FAIL:<Type>" / "TEST_FAIL:<Type>" / "OTHER_FAIL:<Type>"
     passed: bool
     exec_ok: bool
     test_pass: bool
@@ -78,27 +74,145 @@ class BaseAdapter(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def classify_execution(self, exec_result: Any) -> Dict[str, Any]:
         """
-        execution 결과를 공통 메타 정보로 변환한다.
+        dataset별 execution 결과를 공통 포맷으로 변환한다.
 
-        최소 반환 필드:
-        {
-            "status": str,
-            "passed": bool,
-            "exec_ok": bool,
-            "test_pass": bool,
-            "exec_success": bool,   # ver2 호환용 (보통 exec_ok와 동일)
-            "error_type": str | None,
-            "error_stage": str | None,   # "exec" / "test" / None
-            "error_message": str | None,
-            "tests_passed": int | None,
-            "tests_total": int | None,
-            "meta": dict,
-        }
+        stage 정의:
+        - "code"         : generated code 자체가 exec 실패
+        - "define_test"  : test/check/unittest 정의 코드 exec 실패
+        - "run_test"     : 테스트 실행 실패
+
+        status 규칙:
+        - passed=True                          -> PASS
+        - failed_stage == "code"              -> EXEC_FAIL:<ErrorType>
+        - failed_stage == "define_test"       -> DEFINE_TEST_FAIL:<ErrorType>
+        - failed_stage == "run_test"          -> TEST_FAIL:<ErrorType>
+        - 그 외                               -> OTHER_FAIL:<ErrorType>
         """
-        raise NotImplementedError
+
+        # -------------------------
+        # 1. raw 값 추출
+        # -------------------------
+        failed_stage = getattr(exec_result, "failed_stage", None)
+        raw_error_type = getattr(exec_result, "error_type", None)
+        error_message = getattr(exec_result, "error", None)
+
+        code_exec_passed = getattr(exec_result, "code_exec_passed", False)
+        setup_exec_passed = getattr(exec_result, "setup_exec_passed", False)
+        test_exec_passed = getattr(exec_result, "test_exec_passed", False)
+        failed_test_index = getattr(exec_result, "failed_test_index", None)
+
+        # -------------------------
+        # 2. meta (raw 정보 보존)
+        # -------------------------
+        base_meta = {
+            "code_exec_passed": code_exec_passed,
+            "setup_exec_passed": setup_exec_passed,
+            "test_exec_passed": test_exec_passed,
+            "failed_stage": failed_stage,
+            "failed_test_index": failed_test_index,
+            "raw_error_type": raw_error_type,
+        }
+
+        # -------------------------
+        # 3. PASS
+        # -------------------------
+        if exec_result.passed:
+            return {
+                "status": "PASS",
+                "passed": True,
+                "exec_ok": True,
+                "test_pass": True,
+                "exec_success": True,
+                "error_type": None,
+                "error_stage": None,
+                "error_message": None,
+                "tests_passed": None,
+                "tests_total": None,
+                "meta": base_meta,
+            }
+
+        # -------------------------
+        # 4. 기본 값
+        # -------------------------
+        error_type = raw_error_type or "UnknownError"
+        exec_ok = code_exec_passed and setup_exec_passed
+
+        # -------------------------
+        # 5. code 실패
+        # -------------------------
+        if failed_stage == "code":
+            return {
+                "status": f"EXEC_FAIL:{error_type}",
+                "passed": False,
+                "exec_ok": False,
+                "test_pass": False,
+                "exec_success": False,
+                "error_type": error_type,
+                "error_stage": "exec",
+                "error_message": error_message,
+                "tests_passed": None,
+                "tests_total": None,
+                "meta": base_meta,
+            }
+
+        # -------------------------
+        # 6. define_test 실패
+        # -------------------------
+        if failed_stage == "define_test":
+            return {
+                "status": f"DEFINE_TEST_FAIL:{error_type}",
+                "passed": False,
+                "exec_ok": False,
+                "test_pass": False,
+                "exec_success": False,
+                "error_type": error_type,
+                "error_stage": "exec",
+                "error_message": error_message,
+                "tests_passed": None,
+                "tests_total": None,
+                "meta": base_meta,
+            }
+
+        # -------------------------
+        # 7. run_test 실패
+        # -------------------------
+        if failed_stage == "run_test":
+            return {
+                "status": f"TEST_FAIL:{error_type}",
+                "passed": False,
+                "exec_ok": exec_ok,
+                "test_pass": False,
+                "exec_success": exec_ok,
+                "error_type": error_type,
+                "error_stage": "test",
+                "error_message": error_message,
+                "tests_passed": failed_test_index,
+                "tests_total": None,
+                "meta": base_meta,
+            }
+
+        # -------------------------
+        # 8. fallback (unexpected)
+        # -------------------------
+        return {
+            "status": f"OTHER_FAIL:{error_type}",
+            "passed": False,
+            "exec_ok": False,
+            "test_pass": False,
+            "exec_success": False,
+            "error_type": error_type,
+            "error_stage": "unknown",
+            "error_message": error_message,
+            "tests_passed": None,
+            "tests_total": None,
+            "meta": {
+                **base_meta,
+                "unexpected": True,
+                "unexpected_reason": f"Unhandled failed_stage: {failed_stage}",
+            },
+        }
 
     def make_attempt_record(
         self,

@@ -1,5 +1,20 @@
-# 📘 Phase 1: Easy Code Generation (HumanEval, MBPP)
-## Main Results 
+# 📘 Phase 1: Orchestration Method Comparison & Analysis (HumanEval, MBPP, BigCodeBench)
+## ver2 Results_hummaneval
+
+Base
+```
+  📊 결과 요약
+  총 문제: 164
+  통과: 113
+  실행 성공: 140
+  pass@1: 0.6890
+  execution_success_rate: 0.8537
+  conditional_pass: 0.8071
+============================================================
+  code_failed: 24
+  define_test_failed: 0
+  run_test_failed: 27
+```
 
 Repair
 ```

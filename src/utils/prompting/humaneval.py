@@ -11,8 +11,7 @@ import re
 
 def build_humaneval_prompt(sample: HumanEvalSample) -> str:
     """
-    HumanEval은 원본 prompt 자체가
-    함수 시그니처 + docstring completion 형식이라 그대로 사용
+    HumanEval은 원본 prompt 자체가 함수 시그니처 + docstring completion 형식이라 그대로 사용
     """
     return sample.prompt
 
@@ -32,7 +31,6 @@ def extract_humaneval_code(sample: HumanEvalSample, generation: str) -> str:
     cleaned = strip_code_fence(generation)
     extracted_body = truncate_at_new_toplevel_block(cleaned)
     return sample.prompt + extracted_body
-
 def build_humaneval_repair_prompt(
     sample: HumanEvalSample,
     previous_code: str,

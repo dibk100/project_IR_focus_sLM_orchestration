@@ -1,0 +1,54 @@
+# Phase 2: HumanEval - Policy
+# 사용법:
+#   PYTHONPATH=. python -m src.orchestration.policy_loop experiments/phase2_ver1/configs/humaneval_policy.yaml
+
+run:
+  run_id: "phase2_qwen25coder7b_humaneval_policy"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.2
+
+  planner:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:    
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "policy_loop"
+
+budget:
+  max_calls: 100
+
+policy:
+  allow_plan: true
+  max_plan_calls: 3
+  max_repair_steps: 5
+  use_planner_extract: false
+
+output:
+  dir: "results/phase1_ver4/humaneval/policy_loop"
+
+logging:
+  save_step_level: True
+  save_trajectory_level: True
+  save_problem_summary: True
+  save_run_analysis: True
+  save_code: True
+
+debug:
+  mode: "run"
