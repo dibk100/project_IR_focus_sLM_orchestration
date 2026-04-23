@@ -1,0 +1,49 @@
+# Phase 1: HumanEval Code-Then-Plan
+# 사용법:
+# PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/phase1_ver5_phi/configs/humaneval_code_then_plan_repair.yaml
+
+run:
+  seed: 42
+
+dataset:
+  name: humaneval        # humaneval | mbpp
+  num_samples: 164        
+
+method:
+  name: code_then_plan_repair
+
+model:
+  name: "microsoft/Phi-3.5-mini-instruct"
+  temperature: 0.2
+  planner:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+budget:
+  max_calls: 50           # generate + plan + plan_code + repair
+  
+output:
+  dir: "results/phase1_ver5_phi/humaneval/code_then_plan_repair"
+
+logging:
+  save_step_level: true          # 필수 (stage별 토큰 확인)
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: true
+  save_code: true
+
+debug:
+  mode: sample                     # run | sample
+
+  # 토큰 분석용 커스텀 옵션 (코드에서 읽어도 되고 안 읽어도 됨)
+  print_token_stats: true
+  log_prompt_lengths: true
