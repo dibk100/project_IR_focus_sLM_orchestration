@@ -1,0 +1,54 @@
+# Phase 2: HumanEval - Repair-to-Plan Escalation Policy (RPEP)
+# 사용법:
+#   PYTHONPATH=. python -m src.orchestration.policy_loop experiments/phase2_qwen/configs/humaneval_rpe_policy.yaml
+
+run:
+  run_id: "phase2_qwen25coder7b_humaneval_rpe_policy"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.2
+  
+  planner:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:    
+    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "policy_loop"
+
+budget:
+  max_calls: 20
+
+policy:
+  max_plan_calls: 3
+  max_repair_steps: 15
+  stagnation_threshold : 2
+
+output:
+  dir: "results/phase2_qwen/humaneval/rpe_policy"
+
+logging:
+  save_step_level: false              # 각 step별 행동 기록
+  save_trajectory_level: false        # 전체 시도 과정
+  save_problem_summary: True     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
+  save_run_analysis: false
+  save_code: false          # 생성 코드 저장 여부
+  failure_examples: false   # 실패 예제 저장 여부
+
+debug:
+  mode: "run"

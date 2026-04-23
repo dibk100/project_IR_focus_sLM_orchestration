@@ -56,16 +56,11 @@ Problem
       - 모두 실행 불가능 -> fail
 
 ### Methods
-- Single-shot(G) : 1회 생성
-- Retry-only(G -> R) : 프롬프트에 입력, 이전코드
-- Best-of-N(G x N -> S) : N개 후보를 독립 생성한 뒤 후처리로 선택하는 pass-seeking policy
-- Repair loop(G -> V -> R)
-   - 프롬프트에 (입력, 이전코드, 에러메세지(exec fail, test fail))가 넣어짐.
-   - 추후에 결과 분석을 위해 각 loop마다 어떤 단계(exec fail, test faill, call faill 등)이었던게 해결되었는지 확인이 필요
-- Planner-Coder(D → G)
-   - **Constrained Planner-Coder(step 수 최대 5 제한, 각 step 최대 20 tokens, 최종 plan 총 길이 최대 100~150 tokens)**
-   - Unconstrained Planner-Coder(자율 서술형 plan : 나중에 ablation으로 하기)
-- Planner + Repair(D -> G -> V -> R) 
+- Single-shot({Input} → Generation) : 1회 생성
+- Retry-only({Input} → Generation → [{Input} → Generation]xN번 반복)
+- Repair loop({Input} → Generation → [{Input, Feedback} → Generation]xN번 반복) : 코드 생성 후 실패 시, 이전 코드와 에러 메시지를 프롬프트에 넣어 코드를 생성하는 전략
+- Code-Then-Plan({Input} → Generation → {Input, Plan} → Generation) : 코드 생성 후 실패 시, 초기 입력을 활용하여 계획을 생성하게 한 후 계획 기반으로 코드를 생성하는 전략
+- Code-Then-Plan + Repair({Input} → Generation → {Input, Plan} → Generation → [{Input, Feedback} → Generation]) : Planner 전략에서  코드 생성 실패 시, Repair 전략을 붙인 전략
 
 ```
 Single-shot: Problem -> G -> Evaluate

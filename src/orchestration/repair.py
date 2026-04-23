@@ -1,39 +1,29 @@
 """
-Repair Loop Orchestration
+Repair Loop
 
 흐름: Problem → G → V → R → Evaluate
 1. task 읽기
 2. initial generation
 3. 실행/평가 (Verification)
 4. 실패 시 (입력 + 이전코드 + 에러메시지)로 repair prompt 생성 → 재생성
-5. 최대 max_repair 횟수까지 반복
+5. 최대 max_repair(max_call) 횟수까지 반복
 
 retry와의 차이:
 - retry: error message 없이 pure refinement (이전 코드 + 원래 문제만 전달)
 - repair: error message를 포함한 feedback 기반 수정 (exec fail, test fail 정보 포함)
-
-핵심:
-- execution feedback(에러 메시지)를 활용한 구조적 수정
-- 각 loop마다 어떤 단계(EXEC_FAIL, TEST_FAIL)에서 실패했고,
-  다음 시도에서 해결되었는지 transition_path로 추적
-
-Phase1 ver3 기준:
-- nested config 구조 사용
-- HFModel.generate()의 구조화된 반환값 사용
-- step_logs / trajectory_logs / summary / analysis 저장
 """
+from __future__ import annotations
+
 import gc
-import io
 import os
 import sys
 import time
-import yaml
-import contextlib
+from types import SimpleNamespace
 
+import yaml
 import torch
 
 from src.models.hf_model import HFModel
-
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
 from src.utils.io import save_result, save_results_jsonl, make_run_id
 from src.utils.dataloader import load_task_and_adapter
@@ -82,7 +72,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
         return
     print(_shorten(generated_code))
 
-    # HumanEval 전용 흐름 상세 출력
     if hasattr(sample, "test") and hasattr(sample, "entry_point"):
         namespace = {}
 
@@ -129,7 +118,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print("FAILED")
             print(repr(e))
 
-    # MBPP
     elif hasattr(sample, "test_list"):
         _print_header("SAMPLE DEBUG :: MBPP TEST SETUP")
         if hasattr(sample, "test_setup_code"):
@@ -143,7 +131,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print(_shorten(test_case))
             print("-" * 40)
 
-    # BigCode
     elif hasattr(sample, "test"):
         _print_header("SAMPLE DEBUG :: TEST CODE")
         print(_shorten(sample.test))
@@ -162,10 +149,6 @@ def _collect_failure_example(
     error_stage: str | None,
     error_message: str | None,
 ):
-    """
-    실패 유형(status)별 대표 예시 1건만 수집한다.
-    이미 동일 status의 예시가 있으면 스킵한다.
-    """
     if status == "PASS" or status in failure_examples:
         return
 
@@ -182,9 +165,21 @@ def _collect_failure_example(
     }
 
 
+def _make_empty_output_record(message: str = "Model output was empty or contained no extractable code."):
+    return SimpleNamespace(
+        status="CODE_FAIL:empty_output",
+        tests_passed=0,
+        tests_total=None,
+        passed=False,
+        exec_ok=False,
+        test_pass=False,
+        error_type="empty_output",
+        error_stage="code",
+        error_message=message,
+    )
+
+
 def run_repair_loop(config_path: str):
-    """Repair loop 실험 실행"""
-    # ── 1. Config 로드 ──
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -208,9 +203,7 @@ def run_repair_loop(config_path: str):
     temperature = model_cfg.get("temperature", 0.0)
 
     method_name = method_cfg.get("name", "repair_loop")
-
     max_calls = budget_cfg.get("max_calls", 3)
-    max_repair = budget_cfg.get("max_repair", 2)
 
     output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/repair")
 
@@ -220,14 +213,14 @@ def run_repair_loop(config_path: str):
     save_run_analysis = logging_cfg.get("save_run_analysis", True)
     save_code = logging_cfg.get("save_code", True)
 
-    # debug mode
-    debug_mode = debug_cfg.get("mode", "run")   # "run" | "sample"
-
+    debug_mode = debug_cfg.get("mode", "run")  # "run" | "sample"
+   
     os.makedirs(output_dir, exist_ok=True)
 
-    # sample 모드일 때 print를 파일로 저장
     stdout_backup = sys.stdout
     log_fp = None
+    debug_log_path = None
+
     if debug_mode == "sample":
         debug_log_path = os.path.join(output_dir, "sample_debug_output.txt")
         log_fp = open(debug_log_path, "w", encoding="utf-8")
@@ -241,7 +234,6 @@ def run_repair_loop(config_path: str):
         print(f"dataset             : {dataset_name}")
         print(f"method              : {method_name}")
         print(f"max_calls           : {max_calls}")
-        print(f"max_repair          : {max_repair}")
         print(f"max_new_tokens      : {max_new_tokens}")
         print(f"temperature         : {temperature}")
         print(f"seed                : {seed}")
@@ -249,7 +241,6 @@ def run_repair_loop(config_path: str):
         print(f"debug_mode          : {debug_mode}")
         print("=" * 60)
 
-        # config snapshot 저장
         save_result(
             {
                 "run": {
@@ -268,11 +259,9 @@ def run_repair_loop(config_path: str):
             os.path.join(output_dir, "config.json"),
         )
 
-        # ── 2. Task / Adapter 로드 ──
         task, adapter = load_task_and_adapter(dataset_name)
         print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
 
-        # ── 3. 모델 로드 ──
         print(f"🔄 모델 로딩: {model_name}")
         model = HFModel(
             model_name=model_name,
@@ -281,7 +270,6 @@ def run_repair_loop(config_path: str):
         )
         print("✅ 모델 로딩 완료")
 
-        # ── 4. 실험 실행 ──
         step_logs = []
         trajectory_logs = []
         eval_results = []
@@ -296,7 +284,6 @@ def run_repair_loop(config_path: str):
 
             print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} ---")
 
-            # 문제별 누적 토큰/레이턴시/상태 추적
             cumulative_input_tokens = 0
             cumulative_output_tokens = 0
             cumulative_total_tokens = 0
@@ -308,14 +295,14 @@ def run_repair_loop(config_path: str):
 
             previous_code = None
             final_attempt_record = None
+            final_exec_result = None
 
-            # initial prompt
             current_prompt = adapter.build_initial_prompt(sample)
 
-            for attempt_idx in range(max_repair + 1):
+            while call_count < max_calls:
+                attempt_idx = call_count
                 is_repair = attempt_idx > 0
 
-                # 4-1. 모델 호출 + 시간 측정
                 gen_start = time.perf_counter()
                 gen_result = model.generate(current_prompt)
                 gen_end = time.perf_counter()
@@ -325,16 +312,17 @@ def run_repair_loop(config_path: str):
                 input_tokens = gen_result["input_tokens"]
                 output_tokens = gen_result["output_tokens"]
                 total_tokens = gen_result["total_tokens"]
-
+                
                 call_count += 1
                 cumulative_input_tokens += input_tokens
                 cumulative_output_tokens += output_tokens
                 cumulative_total_tokens += total_tokens
                 cumulative_latency += latency_sec
 
-                # 4-1-check. 모델 출력이 빈 값인지 확인
                 if output_tokens == 0 or not raw_text.strip():
-                    current_status = "CODE_FAIL:empty_output"
+                    final_attempt_record = _make_empty_output_record()
+                    final_exec_result = final_attempt_record
+                    current_status = final_attempt_record.status
                     transition_path.append(current_status)
 
                     step_entry = {
@@ -358,11 +346,11 @@ def run_repair_loop(config_path: str):
                         "exec_ok": False,
                         "test_pass": False,
                         "status": current_status,
-                        "error_type": "empty_output",
-                        "error_stage": "code",
-                        "error_message": "Model output was empty or contained no extractable code.",
-                        "tests_passed": 0,
-                        "tests_total": None,
+                        "error_type": final_attempt_record.error_type,
+                        "error_stage": final_attempt_record.error_stage,
+                        "error_message": final_attempt_record.error_message,
+                        "tests_passed": final_attempt_record.tests_passed,
+                        "tests_total": final_attempt_record.tests_total,
                         "code_length": 0,
                         "selected": None,
                         "selection_rank": None,
@@ -372,13 +360,6 @@ def run_repair_loop(config_path: str):
                         step_entry["entry_point"] = sample.entry_point
 
                     step_logs.append(step_entry)
-
-                    final_attempt_record = SimpleNamespace(
-                        status=current_status,
-                        tests_passed=0,
-                        tests_total=None,
-                        passed=False,
-                    )
 
                     print(f"  attempt {attempt_idx}: ❌ {current_status}")
 
@@ -390,14 +371,14 @@ def run_repair_loop(config_path: str):
                         prompt=current_prompt,
                         raw_text=raw_text,
                         generated_code=None,
-                        error_type="empty_output",
-                        error_stage="code",
-                        error_message="Model output was empty or contained no extractable code.",
+                        error_type=final_attempt_record.error_type,
+                        error_stage=final_attempt_record.error_stage,
+                        error_message=final_attempt_record.error_message,
                     )
 
-                    if attempt_idx == max_repair:
+                    if call_count >= max_calls:
                         break
-                    # 다음 repair는 previous_code=None(초기 상태)으로 재시도
+
                     current_prompt = adapter.build_repair_prompt(
                         sample=sample,
                         previous_code=previous_code,
@@ -405,10 +386,8 @@ def run_repair_loop(config_path: str):
                     )
                     continue
 
-                # 4-2. 코드 추출
                 generated_code = adapter.extract_code(sample, raw_text)
 
-                # sample 모드일 때 단계별 실행 흐름 출력
                 if debug_mode == "sample":
                     _print_sample_execution_flow(
                         sample=sample,
@@ -417,7 +396,6 @@ def run_repair_loop(config_path: str):
                         generated_code=generated_code,
                     )
 
-                # 4-3. 실행 / 평가 (Verification 단계)
                 exec_result = adapter.execute(sample, generated_code)
 
                 if debug_mode == "sample":
@@ -427,7 +405,6 @@ def run_repair_loop(config_path: str):
                     _print_header("SAMPLE DEBUG :: CLASSIFIED EXECUTION")
                     print(adapter.classify_execution(exec_result))
 
-                # 4-4. attempt record 생성
                 attempt_record = adapter.make_attempt_record(
                     sample=sample,
                     method=method_name,
@@ -445,6 +422,7 @@ def run_repair_loop(config_path: str):
                     print(attempt_record)
 
                 final_attempt_record = attempt_record
+                final_exec_result = exec_result
                 current_status = attempt_record.status
                 transition_path.append(current_status)
 
@@ -453,7 +431,6 @@ def run_repair_loop(config_path: str):
                 if str(current_status).startswith("TEST_FAIL"):
                     num_test_fail += 1
 
-                # 4-5. step-level log
                 step_entry = {
                     "run_id": run_id,
                     "dataset": dataset_name,
@@ -490,11 +467,7 @@ def run_repair_loop(config_path: str):
 
                 step_logs.append(step_entry)
 
-                pretty_status = (
-                    "✅ PASS"
-                    if current_status == "PASS"
-                    else f"❌ {current_status}"
-                )
+                pretty_status = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                 print(f"  attempt {attempt_idx}: {pretty_status}")
 
                 _collect_failure_example(
@@ -510,16 +483,12 @@ def run_repair_loop(config_path: str):
                     error_message=attempt_record.error_message,
                 )
 
-                # 성공하면 종료
                 if attempt_record.passed:
                     break
 
-                # 마지막 attempt이면 종료
-                if attempt_idx == max_repair:
+                if call_count >= max_calls:
                     break
 
-                # 4-6. 다음 repair를 위한 repair prompt 구성
-                #   retry와의 핵심 차이: error_message를 포함하여 전달
                 previous_code = generated_code
                 current_prompt = adapter.build_repair_prompt(
                     sample=sample,
@@ -527,16 +496,15 @@ def run_repair_loop(config_path: str):
                     error_message=attempt_record.error_message,
                 )
 
-            # (문제 종료) 최종 exec_result를 eval_results에 추가
-            eval_results.append(exec_result)
+            if final_exec_result is None:
+                final_exec_result = _make_empty_output_record("No executable result was produced.")
+            if final_attempt_record is None:
+                final_attempt_record = _make_empty_output_record("No attempt record was produced.")
 
-            # 4-7. trajectory-level log
+            eval_results.append(final_exec_result)
+
             final_status = final_attempt_record.status
-
-            if final_status == "PASS":
-                failure_family = "PASS"
-            else:
-                failure_family = str(final_status).split(":")[0]
+            failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -564,15 +532,10 @@ def run_repair_loop(config_path: str):
 
             trajectory_logs.append(trajectory_entry)
 
-            # OOM 방지
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-            del gen_result, step_entry, trajectory_entry
-            del attempt_record, exec_result
             gc.collect()
 
-        # ── 5. 결과 요약 ──
         summary = summarize_phase1_results(eval_results)
 
         print(f"\n{'=' * 60}")
@@ -585,14 +548,12 @@ def run_repair_loop(config_path: str):
         print(f"  conditional_pass: {summary['conditional_pass']:.4f}")
         print(f"{'=' * 60}")
 
-        extra_summary = {}
         extra_summary = summarize_failure_breakdown(eval_results)
         print(f"  code_failed: {extra_summary['code_failed']}")
         print(f"  define_test_failed: {extra_summary['define_test_failed']}")
         print(f"  run_test_failed: {extra_summary['run_test_failed']}")
         print(f"{'=' * 60}")
 
-        # ── 6. Problem-level summary ──
         avg_tokens = (
             sum(x["total_tokens"] for x in trajectory_logs) / len(trajectory_logs)
             if trajectory_logs else 0.0
@@ -605,7 +566,7 @@ def run_repair_loop(config_path: str):
             sum(x["call_count"] for x in trajectory_logs) / len(trajectory_logs)
             if trajectory_logs else 0.0
         )
-
+        
         problem_summary = {
             "run_id": run_id,
             "dataset": dataset_name,
@@ -621,7 +582,6 @@ def run_repair_loop(config_path: str):
             "extra_summary": extra_summary,
         }
 
-        # ── 7. Run-level analysis summary ──
         transition_counts = {}
         failure_type_counts = {}
         failure_family_counts = {}
@@ -654,7 +614,6 @@ def run_repair_loop(config_path: str):
             "failure_family_counts": failure_family_counts,
         }
 
-        # ── 8. 결과 저장 ──
         if save_step_level:
             save_results_jsonl(
                 step_logs,
@@ -679,7 +638,6 @@ def run_repair_loop(config_path: str):
                 os.path.join(output_dir, "analysis.json"),
             )
 
-        # ── 9. 실패 유형별 대표 예시 저장 ──
         if failure_examples:
             save_result(
                 failure_examples,
@@ -688,7 +646,6 @@ def run_repair_loop(config_path: str):
             print(f"📝 failure_examples: {len(failure_examples)}개 유형 저장됨")
 
     finally:
-        # sample 모드에서 stdout 복구
         if log_fp is not None:
             log_fp.close()
             sys.stdout = stdout_backup

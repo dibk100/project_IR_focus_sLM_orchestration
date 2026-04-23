@@ -1,10 +1,65 @@
 """
-Policy Loop Orchestration
+Policy
 
-Usage
-  PYTHONPATH=. python -m src.orchestration.policy_loop experiments/phase2_ver1/configs/humaneval_policy.yaml
+stage별 오류 유형과, 실패 반복 패턴을 기반으로, repair / replan 중 적절한 전략을 동적으로 선택하는 policy를 구현하고자 함.
+제한된 budget 내에서 문제 해결 확률을 극대화하는 것을 목표로 하고 싶었으나, 사실상 간단한 rule-based로 구현됨.
+우연한 확률에 기대하는 것인지 추가 실험이 필요함.
+
+State = {
+    failure_type : 현재 실행 결과의 상위 실패 단계 (PASS / EXEC_FAIL / TEST_FAIL)
+    error_type : 실패의 구체적인 에러 타입 
+                 (AssertionError / SyntaxError / TypeError / ...)
+    previous_state : 직전 step의 실패 상태 
+                     (prev_failure_type, prev_error_type)
+    repetition_pattern : 동일한 (failure_type, error_type)가 
+                         연속으로 반복된 횟수
+    last_action : 직전에 수행한 전략 
+                  (generate / repair / plan)
+    plan_budget_usage : 현재까지 사용한 planning 횟수 
+                        (num_plan_calls)
+}
+
+Action = {
+    generate : 문제 입력만을 기반으로 초기 코드를 생성하는 단계
+
+    repair : 이전에 생성한 코드와 실패 피드백(error message)을 바탕으로 
+             코드를 수정하는 단계
+
+    re-plan : 문제 입력(및 필요 시 이전 실패 정보)을 바탕으로 
+           해결 계획을 생성한 뒤, 그 계획에 따라 코드를 다시 생성하는 단계
+}
+
+Rules:
+1. Initial Rule
+   - 처음에는 항상 generate 수행
+   - 첫 plan 호출 이후, re-plan(이전 실패 코드와 메세지를 추가한 plan 프롬프트)을 호출하게 됨.(2번째 plan 호출은 무조건 re-plan 프롬프트 사용)
+
+2. AssertionError Rule
+   if failure_type == TEST_FAIL and error_type == AssertionError:
+       → plan
+    - 첫 generate에서 위 패턴이 나오면, plan으로 전환하여 문제 해결을 시도
+    - plan 이후, 같은 패턴이 나오면 re-plan으로 전환
+    
+3. Repair Default Rule
+   그 외의 경우:
+       → repair (최대 K번 반복)
+
+4. Stagnation Rule
+       if (failure_type,error_type) repeated ≥ K:
+       → plan
+    - 같은 (failure_type, error_type) 패턴이 K번 이상 반복되면, 같은 전략으로 계속 시도하는 것은 의미가 없다고 판단하여 plan으로 전환
+
+5. Budget Constraint Rule
+   if plan_budget_usage ≥ max_plan_calls:
+       → plan 불가 → 종료
+    - plan 전략은 예산이 허용하는 범위 내에서만 호출 가능하도록 함. 
+    예산이 소진된 경우, 더 이상 plan 전략을 사용할 수 없고 종료함.
+
+7. Global Budget Rule
+   if total_calls ≥ max_calls:
+       → 종료
+    - 전체 시도 횟수가 max_calls에 도달하면, 더 이상 시도할 수 없고 종료함.
 """
-
 from __future__ import annotations
 
 import gc
@@ -35,7 +90,7 @@ from src.utils.prompting.planner_coder import extract_planner_output
 # Debug helpers
 # ============================================================
 
-def _shorten(text, max_len: int = 1000) -> str:
+def _shorten(text, max_len: int = 10000) -> str:
     if text is None:
         return "(None)"
     s = str(text)
@@ -552,6 +607,8 @@ def run_policy_loop(config_path: str):
 
     run_id = make_run_id(config)
     seed = run_cfg.get("seed", 42)
+    
+    stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
 
     dataset_name = dataset_cfg.get("name", "humaneval")
     num_samples = dataset_cfg.get("num_samples", 1)
@@ -582,6 +639,7 @@ def run_policy_loop(config_path: str):
     save_problem_summary = logging_cfg.get("save_problem_summary", True)
     save_run_analysis = logging_cfg.get("save_run_analysis", True)
     save_code = logging_cfg.get("save_code", True)
+    save_failure_examples  = logging_cfg.get("failure_examples", True)
 
     debug_mode = debug_cfg.get("mode", "run")
 
@@ -1004,7 +1062,7 @@ def run_policy_loop(config_path: str):
                         break
 
                     if current_fail == "TEST_FAIL":
-                        if same_signature_run_length(history) >= 2:
+                        if same_signature_run_length(history) >= stagnation_threshold:
                             if plan_available(history, policy_cfg):
                                 forced_next_action = "plan"
                                 break
@@ -1012,7 +1070,7 @@ def run_policy_loop(config_path: str):
                             print(f"  stop: 🛑 {stop_reason}")
                             break
 
-                    if current_fail == "EXEC_FAIL" and same_signature_run_length(history) >= 2:
+                    if current_fail == "EXEC_FAIL" and same_signature_run_length(history) >= stagnation_threshold:
                         if plan_available(history, policy_cfg):
                             forced_next_action = "plan"
                             break
@@ -1023,7 +1081,7 @@ def run_policy_loop(config_path: str):
                 if stop_reason is not None or final_attempt_record.passed:
                     break
 
-                if same_signature_run_length(history) >= 2:
+                if same_signature_run_length(history) >= stagnation_threshold:
                     if plan_available(history, policy_cfg):
                         forced_next_action = "plan"
                         continue
@@ -1032,13 +1090,6 @@ def run_policy_loop(config_path: str):
                     break
 
                 continue
-
-                if plan_available(history, policy_cfg):
-                    forced_next_action = "plan"
-                    continue
-                stop_reason = "plan_budget_exhausted"
-                print(f"  stop: 🛑 {stop_reason}")
-                break
 
         if final_exec_result is None:
             final_exec_result = final_attempt_record
@@ -1087,6 +1138,7 @@ def run_policy_loop(config_path: str):
         gc.collect()
 
     # ── 5. 결과 요약 ──
+        # ── 5. 결과 요약 ──
     summary = summarize_phase1_results(eval_results)
 
     print(f"\n{'=' * 60}")
@@ -1105,31 +1157,64 @@ def run_policy_loop(config_path: str):
     print(f"  run_test_failed: {extra_summary['run_test_failed']}")
     print(f"{'=' * 60}")
 
-    # plan / repair 통계
-    n_used_plan = sum(1 for t in trajectory_logs if t.get("used_plan", False))
-    n_plan_recovered = sum(
+    total = len(trajectory_logs)
+
+    # -----------------------------
+    # problem-level stats
+    # -----------------------------
+    n_used_plan_problems = sum(1 for t in trajectory_logs if t.get("used_plan", False))
+    n_plan_recovered_problems = sum(
         1 for t in trajectory_logs
         if t.get("recovered_by") == "plan_code"
     )
 
-    n_used_repair = sum(1 for t in trajectory_logs if t.get("used_repair", False))
-    n_repair_recovered = sum(
+    n_used_repair_problems = sum(1 for t in trajectory_logs if t.get("used_repair", False))
+    n_repair_recovered_problems = sum(
         1 for t in trajectory_logs
         if t.get("recovered_by") == "repair"
     )
 
-    print(f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} ({n_used_plan/len(trajectory_logs)*100:.1f}%)")
-    print(
-        f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} ({n_plan_recovered/n_used_plan*100:.1f}%)"
-        if n_used_plan > 0 else "  plan 복구 성공: 0/0"
+    # -----------------------------
+    # call-level stats
+    # -----------------------------
+    n_plan_calls = sum(1 for s in step_logs if s.get("stage") == "plan_code")
+    n_plan_call_successes = sum(
+        1 for s in step_logs
+        if s.get("stage") == "plan_code" and s.get("status") == "PASS"
     )
-    print(f"  repair 사용: {n_used_repair}/{len(trajectory_logs)} ({n_used_repair/len(trajectory_logs)*100:.1f}%)")
+
+    n_repair_calls = sum(1 for s in step_logs if s.get("stage") == "repair")
+    n_repair_call_successes = sum(
+        1 for s in step_logs
+        if s.get("stage") == "repair" and s.get("status") == "PASS"
+    )
+
     print(
-        f"  repair 복구 성공: {n_repair_recovered}/{n_used_repair} ({n_repair_recovered/n_used_repair*100:.1f}%)"
-        if n_used_repair > 0 else "  repair 복구 성공: 0/0"
+        f"  [problem-level] plan 사용: {n_used_plan_problems}/{total} ({n_used_plan_problems/total*100:.1f}%)"
+        if total > 0 else "  [problem-level] plan 사용: 0/0"
+    )
+    print(
+        f"  [problem-level] plan 복구 성공: {n_plan_recovered_problems}/{n_used_plan_problems} ({n_plan_recovered_problems/n_used_plan_problems*100:.1f}%)"
+        if n_used_plan_problems > 0 else "  [problem-level] plan 복구 성공: 0/0"
+    )
+    print(
+        f"  [problem-level] repair 사용: {n_used_repair_problems}/{total} ({n_used_repair_problems/total*100:.1f}%)"
+        if total > 0 else "  [problem-level] repair 사용: 0/0"
+    )
+    print(
+        f"  [problem-level] repair 복구 성공: {n_repair_recovered_problems}/{n_used_repair_problems} ({n_repair_recovered_problems/n_used_repair_problems*100:.1f}%)"
+        if n_used_repair_problems > 0 else "  [problem-level] repair 복구 성공: 0/0"
+    )
+
+    print(
+        f"  [call-level] plan 호출 누적: {n_plan_calls}, 성공: {n_plan_call_successes}/{n_plan_calls} ({n_plan_call_successes/n_plan_calls*100:.1f}%)"
+        if n_plan_calls > 0 else "  [call-level] plan 호출 누적: 0, 성공: 0/0"
+    )
+    print(
+        f"  [call-level] repair 호출 누적: {n_repair_calls}, 성공: {n_repair_call_successes}/{n_repair_calls} ({n_repair_call_successes/n_repair_calls*100:.1f}%)"
+        if n_repair_calls > 0 else "  [call-level] repair 호출 누적: 0, 성공: 0/0"
     )
     print(f"{'=' * 60}")
-
 
     if save_problem_summary:
         save_result(
@@ -1143,6 +1228,38 @@ def run_policy_loop(config_path: str):
                 "execution_success_rate": summary["execution_success_rate"],
                 "conditional_pass": summary["conditional_pass"],
                 "extra_summary": extra_summary,
+                "policy_stats": {
+                    "problem_level": {
+                        "plan_used_problems": n_used_plan_problems,
+                        "plan_problem_usage_rate": n_used_plan_problems / total if total > 0 else 0.0,
+                        "plan_recovered_problems": n_plan_recovered_problems,
+                        "plan_problem_recovery_rate": (
+                            n_plan_recovered_problems / n_used_plan_problems
+                            if n_used_plan_problems > 0 else 0.0
+                        ),
+                        "repair_used_problems": n_used_repair_problems,
+                        "repair_problem_usage_rate": n_used_repair_problems / total if total > 0 else 0.0,
+                        "repair_recovered_problems": n_repair_recovered_problems,
+                        "repair_problem_recovery_rate": (
+                            n_repair_recovered_problems / n_used_repair_problems
+                            if n_used_repair_problems > 0 else 0.0
+                        ),
+                    },
+                    "call_level": {
+                        "plan_call_count": n_plan_calls,
+                        "plan_call_success_count": n_plan_call_successes,
+                        "plan_call_success_rate": (
+                            n_plan_call_successes / n_plan_calls
+                            if n_plan_calls > 0 else 0.0
+                        ),
+                        "repair_call_count": n_repair_calls,
+                        "repair_call_success_count": n_repair_call_successes,
+                        "repair_call_success_rate": (
+                            n_repair_call_successes / n_repair_calls
+                            if n_repair_calls > 0 else 0.0
+                        ),
+                    },
+                }
             },
             os.path.join(output_dir, "summary.json"),
         )
@@ -1160,7 +1277,8 @@ def run_policy_loop(config_path: str):
             },
             os.path.join(output_dir, "analysis.json"),
         )
-    if failure_examples:
+        
+    if save_failure_examples and failure_examples :
         save_result(failure_examples, os.path.join(output_dir, "failure_examples.json"))
 
     print("✅ policy_loop 완료")

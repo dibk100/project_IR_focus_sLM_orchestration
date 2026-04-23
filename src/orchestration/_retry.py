@@ -1,5 +1,5 @@
 """
-Retry (Refinement-only) Orchestration
+Retry (Refinement-only)
 
 흐름:
 1. task 읽기
@@ -11,22 +11,13 @@ repair와의 차이:
 - retry: error message 없이 pure refinement (이전 코드 + 원래 문제만 전달)
 - repair: error message를 포함한 feedback 기반 수정
 
-핵심:
 - execution feedback(에러 메시지)를 사용하지 않음
-- pure refinement 효과 측정
-
-Phase1 ver3 기준:
-- nested config 구조 사용
-- HFModel.generate()의 구조화된 반환값 사용
-- step_logs / trajectory_logs / summary / analysis 저장
 """
 import gc
-import io
 import os
 import sys
 import time
 import yaml
-import contextlib
 from types import SimpleNamespace
 
 import torch
