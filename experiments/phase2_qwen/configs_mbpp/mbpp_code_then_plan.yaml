@@ -1,14 +1,14 @@
-# Phase 2: HumanEval Code-Then-Plan
+# Phase 2: MBPP Code-Then-Plan
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phase2_qwen/configs/humaneval_code_then_plan.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phase2_qwen/configs_mbpp/mbpp_code_then_plan.yaml
 
 run:
-  run_id: "phase2_qwen25coder7b_humaneval_code_then_plan"
+  run_id: "phase2_qwen25coder7b_mbpp_code_then_plan"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "mbpp"
+  num_samples: 374
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -26,10 +26,10 @@ method:
   name: "code_then_plan"
 
 budget:
-  max_calls: 20
+  max_calls: 10
 
 output:
-  dir: "results/phase2_qwen/humaneval/code_then_plan"
+  dir: "results/phase2_qwen/mbpp/code_then_plan"
 
 logging:
   save_step_level: true

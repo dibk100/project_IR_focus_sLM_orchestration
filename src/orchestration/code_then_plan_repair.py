@@ -1052,7 +1052,7 @@ def run_code_then_plan_repair(config_path: str):
             1 for t in trajectory_logs
             if t.get("recovered_by") == "repair"
         )
-
+        
         print(
             f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} ({n_used_plan/len(trajectory_logs)*100:.1f}%)"
             if len(trajectory_logs) > 0 else "  plan 사용: 0/0"
@@ -1070,6 +1070,49 @@ def run_code_then_plan_repair(config_path: str):
             if n_used_repair > 0 else "  repair 복구 성공: 0/0"
         )
         print(f"{'=' * 60}")
+        
+        # -----------------------------
+        # call-level stats (NEW)
+        # -----------------------------
+        n_plan_calls = sum(1 for s in step_logs if s.get("stage") == "plan_code")
+        n_plan_call_successes = sum(
+            1 for s in step_logs
+            if s.get("stage") == "plan_code" and s.get("status") == "PASS"
+        )
+
+        n_repair_calls = sum(1 for s in step_logs if s.get("stage") == "repair")
+        n_repair_call_successes = sum(
+            1 for s in step_logs
+            if s.get("stage") == "repair" and s.get("status") == "PASS"
+        )
+
+        print(
+            f"  [call-level] plan 호출 누적: {n_plan_calls}, 성공: {n_plan_call_successes}/{n_plan_calls} ({n_plan_call_successes/n_plan_calls*100:.1f}%)"
+            if n_plan_calls > 0 else "  [call-level] plan 호출 누적: 0, 성공: 0/0"
+        )
+
+        print(
+            f"  [call-level] repair 호출 누적: {n_repair_calls}, 성공: {n_repair_call_successes}/{n_repair_calls} ({n_repair_call_successes/n_repair_calls*100:.1f}%)"
+            if n_repair_calls > 0 else "  [call-level] repair 호출 누적: 0, 성공: 0/0"
+        )
+        
+        # repair가 plan 이후에만 쓰이므로
+        # "plan 이후 repair 성공률"
+
+        plan_then_repair_calls = [
+            s for i, s in enumerate(step_logs)
+            if s.get("stage") == "repair"
+            and i > 0
+            and step_logs[i-1].get("stage") == "plan_code"
+        ]
+
+        plan_then_repair_success = sum(
+            1 for s in plan_then_repair_calls if s.get("status") == "PASS"
+        )
+
+        print(
+            f"  [call-level] plan→repair 성공: {plan_then_repair_success}/{len(plan_then_repair_calls)}"
+        )
 
         avg_tokens = (
             sum(x["total_tokens"] for x in trajectory_logs) / len(trajectory_logs)
@@ -1105,6 +1148,19 @@ def run_code_then_plan_repair(config_path: str):
                 "planning_recovery_rate": n_planning_recovered / n_used_plan if n_used_plan > 0 else 0.0,
                 "repair_recovery_rate": n_repair_recovered / n_used_repair if n_used_repair > 0 else 0.0,
             },
+            "call_level": {
+                "plan_call_count": n_plan_calls,
+                "plan_call_success_count": n_plan_call_successes,
+                "plan_call_success_rate": (
+                    n_plan_call_successes / n_plan_calls if n_plan_calls > 0 else 0.0
+                ),
+                "repair_call_count": n_repair_calls,
+                "repair_call_success_count": n_repair_call_successes,
+                "repair_call_success_rate": (
+                    n_repair_call_successes / n_repair_calls if n_repair_calls > 0 else 0.0
+                ),
+            },
+            "plan_then_repair_success" : plan_then_repair_success,
         }
 
         transition_counts = {}

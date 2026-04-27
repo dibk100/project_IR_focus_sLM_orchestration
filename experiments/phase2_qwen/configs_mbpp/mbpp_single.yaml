@@ -1,14 +1,14 @@
-# Phase 2: HumanEval Single-Shot
+# Phase 2: MBPP Single-Shot
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.single experiments/phase2_qwen/configs/humaneval_single.yaml
+# PYTHONPATH=. python -m src.orchestration.single experiments/phase2_qwen/configs_mbpp/mbpp_single.yaml
 
 run:
-  run_id: "phase2_qwen25coder7b_humaneval_single"
+  run_id: "phase2_qwen25coder7b_mbpp_single"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "mbpp"
+  num_samples: 374
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -22,13 +22,13 @@ budget:
   max_calls: 1
 
 output:
-  dir: "results/phase2_qwen/humaneval/single"
+  dir: "results/phase2_qwen/mbpp/single"
 
 logging:
   save_step_level: true
   save_trajectory_level: true
   save_problem_summary: true
-  save_run_analysis: true
+  save_run_analysis: false
   save_code: false
 
 debug : 

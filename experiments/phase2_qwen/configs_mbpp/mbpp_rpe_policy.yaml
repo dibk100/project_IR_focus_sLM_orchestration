@@ -1,14 +1,14 @@
-# Phase 2: HumanEval - Repair-to-Plan Escalation Policy (RPEP)
+# Phase 2: MBPP - Repair-to-Plan Escalation Policy (RPEP)
 # 사용법:
-#   PYTHONPATH=. python -m src.orchestration.policy_loop experiments/phase2_qwen/configs/humaneval_rpe_policy.yaml
+#   PYTHONPATH=. python -m src.orchestration.policy_loop experiments/phase2_qwen/configs_mbpp/mbpp_rpe_policy.yaml
 
 run:
-  run_id: "phase2_qwen25coder7b_humaneval_rpe_policy"
+  run_id: "phase2_qwen25coder7b_mbpp_rpe_policy"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "mbpp"
+  num_samples: 374
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -35,12 +35,12 @@ budget:
   max_calls: 20
 
 policy:
-  max_plan_calls: 3
-  max_repair_steps: 15
+  max_plan_calls: 20
+  max_repair_steps: 20
   stagnation_threshold : 2
 
 output:
-  dir: "results/phase2_qwen/humaneval/rpe_policy"
+  dir: "results/phase2_qwen/mbpp/rpe_policy"
 
 logging:
   save_step_level: true              # 각 step별 행동 기록

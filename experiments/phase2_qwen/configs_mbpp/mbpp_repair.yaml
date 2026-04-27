@@ -1,14 +1,14 @@
-# Phase 2: HumanEval Repair Loop
+# Phase 2: MBPP Repair Loop
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.repair experiments/phase2_qwen/configs/humaneval_repair.yaml
+# PYTHONPATH=. python -m src.orchestration.repair experiments/phase2_qwen/configs_mbpp/mbpp_repair.yaml
 
 run:
-  run_id: "phase2_qwen25coder7b_humaneval_repair"
+  run_id: "phase2_qwen25coder7b_mbpp_repair"
   seed: 42
 
 dataset:
-  name: "humaneval"
-  num_samples: 164
+  name: "mbpp"
+  num_samples: 374
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -19,10 +19,10 @@ method:
   name: "repair_loop"
 
 budget:
-  max_calls: 20
+  max_calls: 10
 
 output:
-  dir: "results/phase2_qwen/humaneval/repair"
+  dir: "results/phase2_qwen/mbpp/repair"
 
 logging:
   save_step_level: true

@@ -1,9 +1,9 @@
-# Phase 2: HumanEval Code-Then-Plan
+# Phase 2: HumanEval Code-Then-RePlan
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phase2_qwen/configs/humaneval_code_then_plan.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_replan experiments/phase2_qwen/configs/humaneval_code_then_replan.yaml
 
 run:
-  run_id: "phase2_qwen25coder7b_humaneval_code_then_plan"
+  run_id: "phase2_qwen25coder7b_humaneval_code_then_replan"
   seed: 42
 
 dataset:
@@ -29,11 +29,11 @@ budget:
   max_calls: 20
 
 output:
-  dir: "results/phase2_qwen/humaneval/code_then_plan"
+  dir: "results/phase2_qwen/humaneval/code_then_replan"
 
 logging:
-  save_step_level: true
-  save_trajectory_level: true
+  save_step_level: false
+  save_trajectory_level: false
   save_problem_summary: true
   save_run_analysis: false
   save_code: false
