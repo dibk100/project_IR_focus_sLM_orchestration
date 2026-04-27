@@ -77,7 +77,7 @@ project/
 ├── README.md
 │
 ├── analysis/                # notebook, 결과 분석 및 정리
-│   ├── data_EDA/            # step1 : 활용할 데이터 분석을 통해 TASK 구체화
+│   ├── data_EDA/            # 활용할 데이터 분석을 통해 TASK 구체화
 │   └── .../          
 │
 ├── datasets/          
@@ -95,9 +95,10 @@ project/
 │   │   ├── humaneval.py
 │   │   └── mbpp.py
 │   ├── orchestration/       # orchestration : 전략 로직 파트
+│   │   ├── policy_.py 
+│   │   ├── planner_coder_repair.py 
 │   │   ├── planner_coder.py 
-│   │   ├── repair.py         
-│   │   ├── best_of_n.py        
+│   │   ├── repair.py               
 │   │   ├── retry.py        
 │   │   └── single.py
 │   ├── tasks/               

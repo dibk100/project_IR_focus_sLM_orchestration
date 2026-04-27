@@ -4,9 +4,6 @@ import os
 import sys
 import time
 import yaml
-import io
-import contextlib
-
 import torch
 
 from src.models.hf_model import HFModel
@@ -242,7 +239,7 @@ def run_single_shot(config_path: str):
             input_tokens = gen_result["input_tokens"]
             output_tokens = gen_result["output_tokens"]
             total_tokens = gen_result["total_tokens"]
-
+            
             # 4-3. 코드 추출
             generated_code = adapter.extract_code(sample, raw_text)
 
@@ -366,7 +363,7 @@ def run_single_shot(config_path: str):
             del gen_result, step_entry, trajectory_entry
             del attempt_record, exec_result
             gc.collect()
-
+        
         # 5. 결과 요약
         summary = summarize_phase1_results(eval_results)
 

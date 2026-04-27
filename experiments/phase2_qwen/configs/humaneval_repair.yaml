@@ -1,0 +1,35 @@
+# Phase 2: HumanEval Repair Loop
+# 사용법:
+# PYTHONPATH=. python -m src.orchestration.repair experiments/phase2_qwen/configs/humaneval_repair.yaml
+
+run:
+  run_id: "phase2_qwen25coder7b_humaneval_repair"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  max_new_tokens: 512
+  temperature: 0.2
+
+method:
+  name: "repair_loop"
+
+budget:
+  max_calls: 20
+
+output:
+  dir: "results/phase2_qwen/humaneval/repair"
+
+logging:
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: false
+  save_code: false
+
+debug : 
+  mode : "run" 

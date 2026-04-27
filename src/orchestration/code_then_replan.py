@@ -1,22 +1,22 @@
 """
-Code-Then-Plan
+Code-Then-Replan
 
 흐름:
-Problem → G(Generate) → V(Evaluate)
-         → [실패 시] Plan → Code → V
-         → [계속 실패 시] Plan → Code → V
+Problem → G(Generate) 
+         → [실패 시] Plan → Code →
+         → [계속 실패 시] Replan → Code → 
          → ... (budget 내 반복)
 
-- 첫 시도는 generate 1회
-- 실패하면 generic planner를 호출하고, 해당 plan으로 coder가 재생성
-- 이후에도 실패하면 같은 generic planner -> plan_code cycle을 반복
-- replanner / repair는 사용하지 않음
-- max_calls는 전체 글로벌 budget으로 적용
+- 첫 planning 호출만 generic planner를 사용한다.
+- 그 이후 planning 호출은 모두 failure-aware replanner를 사용한다.
+- replanner는 previous_plan + failing_status + error_type + error_message + previous_code를 활용한다.
 
 call 단위:
 - generate = 1 call
 - plan = 1 call
 - plan_code = 1 call
+- replan = 1 call
+- replan_code = 1 call
 """
 from __future__ import annotations
 
@@ -33,7 +33,11 @@ from src.models.hf_model import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
 from src.utils.io import save_result, save_results_jsonl, make_run_id
 from src.utils.dataloader import load_task_and_adapter
-from src.utils.prompt_loader import build_planner_prompt_for_sample, build_coder_prompt_for_sample
+from src.utils.prompt_loader import (
+    build_planner_prompt_for_sample,
+    build_coder_prompt_for_sample,
+    build_replanner_prompt_for_sample,
+)
 from src.utils.prompting.planner_coder import extract_planner_output
 
 
@@ -178,7 +182,7 @@ def _extract_code_for_planner(adapter, sample, raw_text: str):
 # Main runner
 # ─────────────────────────────────────────────
 
-def run_code_then_plan(config_path: str):
+def run_code_then_replan(config_path: str):
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -204,13 +208,16 @@ def run_code_then_plan(config_path: str):
     planner_cfg_inner = model_cfg.get("planner", {})
     planner_max_tokens = planner_cfg_inner.get("max_new_tokens", 256)
 
+    replanner_cfg_inner = model_cfg.get("replanner", planner_cfg_inner)
+    replanner_max_tokens = replanner_cfg_inner.get("max_new_tokens", planner_max_tokens)
+
     coder_cfg_inner = model_cfg.get("coder", {})
     coder_max_tokens = coder_cfg_inner.get("max_new_tokens", max_new_tokens)
 
-    method_name = method_cfg.get("name", "code_then_plan")
-    max_calls = budget_cfg.get("max_calls", 3)
+    method_name = method_cfg.get("name", "code_then_replan")
+    max_calls = budget_cfg.get("max_calls", 5)
 
-    output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/code_then_plan")
+    output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/code_then_replan")
 
     save_step_level = logging_cfg.get("save_step_level", True)
     save_trajectory_level = logging_cfg.get("save_trajectory_level", True)
@@ -219,7 +226,7 @@ def run_code_then_plan(config_path: str):
     save_code = logging_cfg.get("save_code", True)
 
     debug_mode = debug_cfg.get("mode", "run")
-    
+
     os.makedirs(output_dir, exist_ok=True)
 
     log_fp = None
@@ -232,19 +239,20 @@ def run_code_then_plan(config_path: str):
             sys.stdout = log_fp
 
         print("=" * 60)
-        print("🔄 Code-Then-Plan 실험")
+        print("🔄 Code-Then-Replan 실험")
         print("=" * 60)
-        print(f"run_id              : {run_id}")
-        print(f"dataset             : {dataset_name}")
-        print(f"method              : {method_name}")
-        print(f"model               : {model_name}")
-        print(f"max_new_tokens      : {max_new_tokens}")
-        print(f"planner_max_tokens  : {planner_max_tokens}")
-        print(f"coder_max_tokens    : {coder_max_tokens}")
-        print(f"max_calls           : {max_calls}")
-        print(f"seed                : {seed}")
-        print(f"debug_mode          : {debug_mode}")
-        print(f"output_dir          : {output_dir}")
+        print(f"run_id               : {run_id}")
+        print(f"dataset              : {dataset_name}")
+        print(f"method               : {method_name}")
+        print(f"model                : {model_name}")
+        print(f"max_new_tokens       : {max_new_tokens}")
+        print(f"planner_max_tokens   : {planner_max_tokens}")
+        print(f"replanner_max_tokens : {replanner_max_tokens}")
+        print(f"coder_max_tokens     : {coder_max_tokens}")
+        print(f"max_calls            : {max_calls}")
+        print(f"seed                 : {seed}")
+        print(f"debug_mode           : {debug_mode}")
+        print(f"output_dir           : {output_dir}")
         print("=" * 60)
 
         save_result(
@@ -299,6 +307,8 @@ def run_code_then_plan(config_path: str):
             final_exec_result = None
             final_attempt_record = None
             used_plan = False
+            used_replan = False
+            latest_plan = None
             latest_code = None
             plan_attempt_count = 0
 
@@ -483,24 +493,43 @@ def run_code_then_plan(config_path: str):
                     )
 
             # =========================================================
-            # Planning loop: generic plan -> plan_code 반복
+            # Planning loop:
+            # first cycle = generic plan -> plan_code
+            # later cycles = replan -> replan_code
             # =========================================================
             while (
                 final_attempt_record is not None
                 and not final_attempt_record.passed
                 and call_count + 2 <= max_calls
             ):
-                used_plan = True
                 plan_attempt_count += 1
 
-                # 1) generic planner
-                planner_prompt = build_planner_prompt_for_sample(sample)
+                if plan_attempt_count == 1:
+                    used_plan = True
+                    planning_stage = "plan"
+                    planning_status = "PLAN_DONE"
+                    planning_prompt = build_planner_prompt_for_sample(sample)
+                    planning_max_tokens = planner_max_tokens
+                else:
+                    used_replan = True
+                    planning_stage = "replan"
+                    planning_status = "REPLAN_DONE"
+                    planning_prompt = build_replanner_prompt_for_sample(
+                        sample=sample,
+                        previous_plan=latest_plan,
+                        failing_status=final_attempt_record.status,
+                        error_type=getattr(final_attempt_record, "error_type", None),
+                        error_message=getattr(final_attempt_record, "error_message", None),
+                        previous_code=latest_code,
+                    )
+                    planning_max_tokens = replanner_max_tokens
 
+                # planning call
                 orig_tokens = model.max_new_tokens
-                model.max_new_tokens = planner_max_tokens
+                model.max_new_tokens = planning_max_tokens
                 try:
                     plan_start = time.perf_counter()
-                    plan_gen_result = model.generate(planner_prompt)
+                    plan_gen_result = model.generate(planning_prompt)
                     plan_end = time.perf_counter()
                 finally:
                     model.max_new_tokens = orig_tokens
@@ -517,8 +546,8 @@ def run_code_then_plan(config_path: str):
                 cumulative_total_tokens += plan_total_tokens
                 cumulative_latency += plan_latency
 
-                planner_output = extract_planner_output(plan_raw_text)
-                transition_path.append("PLAN_DONE")
+                latest_plan = extract_planner_output(plan_raw_text)
+                transition_path.append(planning_status)
 
                 plan_step_entry = {
                     "run_id": run_id,
@@ -529,20 +558,20 @@ def run_code_then_plan(config_path: str):
                     "step_id": len(step_logs),
                     "call_index": call_count - 1,
                     "candidate_id": 0,
-                    "stage": "plan",
+                    "stage": planning_stage,
                     "is_retry": False,
                     "is_repair": False,
                     "is_planner": True,
-                    "policy_action": "plan",
+                    "policy_action": planning_stage,
                     "input_tokens": plan_input_tokens,
                     "output_tokens": plan_output_tokens,
                     "total_tokens": plan_total_tokens,
                     "latency_sec": plan_latency,
                     "code": None,
-                    "planner_output": planner_output if save_code else None,
+                    "planner_output": latest_plan if save_code else None,
                     "exec_ok": None,
                     "test_pass": None,
-                    "status": "PLAN_DONE",
+                    "status": planning_status,
                     "error_type": None,
                     "error_stage": None,
                     "error_message": None,
@@ -556,41 +585,43 @@ def run_code_then_plan(config_path: str):
                     plan_step_entry["entry_point"] = sample.entry_point
 
                 step_logs.append(plan_step_entry)
-                print(f"  plan[{plan_attempt_count}]: 📝 {planner_output[:80].replace(chr(10), ' ')}...")
+                print(f"  {planning_stage}[{plan_attempt_count}]: 📝 {latest_plan[:80].replace(chr(10), ' ')}...")
 
-                # 2) code generation from plan
-                coder_prompt = build_coder_prompt_for_sample(sample, planner_output)
+                # code generation from current plan
+                coder_prompt = build_coder_prompt_for_sample(sample, latest_plan)
 
                 model.max_new_tokens = coder_max_tokens
                 try:
-                    code2_start = time.perf_counter()
-                    code2_gen_result = model.generate(coder_prompt)
-                    code2_end = time.perf_counter()
+                    code_start = time.perf_counter()
+                    code_gen_result = model.generate(coder_prompt)
+                    code_end = time.perf_counter()
                 finally:
                     model.max_new_tokens = orig_tokens
 
-                code2_latency = code2_end - code2_start
-                code2_raw_text = code2_gen_result["text"]
-                code2_input_tokens = code2_gen_result["input_tokens"]
-                code2_output_tokens = code2_gen_result["output_tokens"]
-                code2_total_tokens = code2_gen_result["total_tokens"]
+                code_latency = code_end - code_start
+                code_raw_text = code_gen_result["text"]
+                code_input_tokens = code_gen_result["input_tokens"]
+                code_output_tokens = code_gen_result["output_tokens"]
+                code_total_tokens = code_gen_result["total_tokens"]
 
                 call_count += 1
-                cumulative_input_tokens += code2_input_tokens
-                cumulative_output_tokens += code2_output_tokens
-                cumulative_total_tokens += code2_total_tokens
-                cumulative_latency += code2_latency
+                cumulative_input_tokens += code_input_tokens
+                cumulative_output_tokens += code_output_tokens
+                cumulative_total_tokens += code_total_tokens
+                cumulative_latency += code_latency
 
-                if code2_output_tokens == 0 or not code2_raw_text.strip():
+                code_stage = f"{planning_stage}_code"
+
+                if code_output_tokens == 0 or not code_raw_text.strip():
                     final_attempt_record = _make_empty_output_record(
-                        "Model output was empty (plan_code stage)."
+                        f"Model output was empty ({code_stage} stage)."
                     )
                     final_exec_result = final_attempt_record
                     latest_code = None
                     current_status = final_attempt_record.status
                     transition_path.append(current_status)
 
-                    code2_step_entry = {
+                    code_step_entry = {
                         "run_id": run_id,
                         "dataset": dataset_name,
                         "problem_id": problem_id,
@@ -599,15 +630,15 @@ def run_code_then_plan(config_path: str):
                         "step_id": len(step_logs),
                         "call_index": call_count - 1,
                         "candidate_id": 0,
-                        "stage": "plan_code",
+                        "stage": code_stage,
                         "is_retry": False,
                         "is_repair": False,
                         "is_planner": False,
                         "policy_action": "generate",
-                        "input_tokens": code2_input_tokens,
-                        "output_tokens": code2_output_tokens,
-                        "total_tokens": code2_total_tokens,
-                        "latency_sec": code2_latency,
+                        "input_tokens": code_input_tokens,
+                        "output_tokens": code_output_tokens,
+                        "total_tokens": code_total_tokens,
+                        "latency_sec": code_latency,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -623,10 +654,10 @@ def run_code_then_plan(config_path: str):
                         "selection_rank": None,
                     }
                     if hasattr(sample, "entry_point"):
-                        code2_step_entry["entry_point"] = sample.entry_point
+                        code_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code2_step_entry)
-                    print(f"  plan_code[{plan_attempt_count}]: ❌ {current_status}")
+                    step_logs.append(code_step_entry)
+                    print(f"  {code_stage}[{plan_attempt_count}]: ❌ {current_status}")
 
                     _collect_failure_example(
                         failure_examples,
@@ -634,7 +665,7 @@ def run_code_then_plan(config_path: str):
                         attempt_idx=plan_attempt_count,
                         status=current_status,
                         prompt=coder_prompt,
-                        raw_text=code2_raw_text,
+                        raw_text=code_raw_text,
                         generated_code=None,
                         error_type=final_attempt_record.error_type,
                         error_stage=final_attempt_record.error_stage,
@@ -642,47 +673,44 @@ def run_code_then_plan(config_path: str):
                     )
 
                 else:
-                    if hasattr(adapter, "extract_code_for_planner"):
-                        code2_generated = adapter.extract_code_for_planner(sample, code2_raw_text)
-                    else:
-                        code2_generated = adapter.extract_code(sample, code2_raw_text)
+                    code_generated = _extract_code_for_planner(adapter, sample, code_raw_text)
 
                     if debug_mode == "sample":
                         _print_sample_execution_flow(
                             sample=sample,
                             prompt=coder_prompt,
-                            raw_text=code2_raw_text,
-                            generated_code=code2_generated,
+                            raw_text=code_raw_text,
+                            generated_code=code_generated,
                         )
 
-                    exec_result = adapter.execute(sample, code2_generated)
+                    exec_result = adapter.execute(sample, code_generated)
 
                     if debug_mode == "sample":
-                        _print_header("SAMPLE DEBUG :: EXEC RESULT OBJECT (plan_code)")
+                        _print_header(f"SAMPLE DEBUG :: EXEC RESULT OBJECT ({code_stage})")
                         print(exec_result)
-                        _print_header("SAMPLE DEBUG :: CLASSIFIED EXECUTION (plan_code)")
+                        _print_header(f"SAMPLE DEBUG :: CLASSIFIED EXECUTION ({code_stage})")
                         print(adapter.classify_execution(exec_result))
 
-                    code2_record = adapter.make_attempt_record(
+                    code_record = adapter.make_attempt_record(
                         sample=sample,
                         method=method_name,
                         model_name=model_name,
                         attempt_idx=plan_attempt_count,
                         prompt=coder_prompt,
-                        raw_output=code2_raw_text,
-                        generated_code=code2_generated,
-                        latency_sec=code2_latency,
+                        raw_output=code_raw_text,
+                        generated_code=code_generated,
+                        latency_sec=code_latency,
                         exec_result=exec_result,
                     )
 
                     if debug_mode == "sample":
-                        _print_header("SAMPLE DEBUG :: ATTEMPT RECORD (plan_code)")
-                        print(code2_record)
+                        _print_header(f"SAMPLE DEBUG :: ATTEMPT RECORD ({code_stage})")
+                        print(code_record)
 
-                    final_attempt_record = code2_record
+                    final_attempt_record = code_record
                     final_exec_result = exec_result
-                    latest_code = code2_generated
-                    current_status = code2_record.status
+                    latest_code = code_generated
+                    current_status = code_record.status
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -690,7 +718,7 @@ def run_code_then_plan(config_path: str):
                     if str(current_status).startswith("TEST_FAIL"):
                         num_test_fail += 1
 
-                    code2_step_entry = {
+                    code_step_entry = {
                         "run_id": run_id,
                         "dataset": dataset_name,
                         "problem_id": problem_id,
@@ -699,36 +727,36 @@ def run_code_then_plan(config_path: str):
                         "step_id": len(step_logs),
                         "call_index": call_count - 1,
                         "candidate_id": 0,
-                        "stage": "plan_code",
+                        "stage": code_stage,
                         "is_retry": False,
                         "is_repair": False,
                         "is_planner": False,
                         "policy_action": "generate",
-                        "input_tokens": code2_input_tokens,
-                        "output_tokens": code2_output_tokens,
-                        "total_tokens": code2_total_tokens,
-                        "latency_sec": code2_latency,
-                        "code": code2_generated if save_code else None,
+                        "input_tokens": code_input_tokens,
+                        "output_tokens": code_output_tokens,
+                        "total_tokens": code_total_tokens,
+                        "latency_sec": code_latency,
+                        "code": code_generated if save_code else None,
                         "planner_output": None,
-                        "exec_ok": code2_record.exec_ok,
-                        "test_pass": code2_record.test_pass,
+                        "exec_ok": code_record.exec_ok,
+                        "test_pass": code_record.test_pass,
                         "status": current_status,
-                        "error_type": code2_record.error_type,
-                        "error_stage": code2_record.error_stage,
-                        "error_message": code2_record.error_message,
-                        "tests_passed": code2_record.tests_passed,
-                        "tests_total": code2_record.tests_total,
-                        "code_length": len(code2_generated) if code2_generated else 0,
+                        "error_type": code_record.error_type,
+                        "error_stage": code_record.error_stage,
+                        "error_message": code_record.error_message,
+                        "tests_passed": code_record.tests_passed,
+                        "tests_total": code_record.tests_total,
+                        "code_length": len(code_generated) if code_generated else 0,
                         "selected": None,
                         "selection_rank": None,
                     }
                     if hasattr(sample, "entry_point"):
-                        code2_step_entry["entry_point"] = sample.entry_point
+                        code_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code2_step_entry)
+                    step_logs.append(code_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  plan_code[{plan_attempt_count}]: {pretty}")
+                    print(f"  {code_stage}[{plan_attempt_count}]: {pretty}")
 
                     _collect_failure_example(
                         failure_examples,
@@ -736,11 +764,11 @@ def run_code_then_plan(config_path: str):
                         attempt_idx=plan_attempt_count,
                         status=current_status,
                         prompt=coder_prompt,
-                        raw_text=code2_raw_text,
-                        generated_code=code2_generated,
-                        error_type=code2_record.error_type,
-                        error_stage=code2_record.error_stage,
-                        error_message=code2_record.error_message,
+                        raw_text=code_raw_text,
+                        generated_code=code_generated,
+                        error_type=code_record.error_type,
+                        error_stage=code_record.error_stage,
+                        error_message=code_record.error_message,
                     )
 
                 if final_attempt_record.passed:
@@ -776,6 +804,7 @@ def run_code_then_plan(config_path: str):
                 "num_test_fail": num_test_fail,
                 "transition_path": transition_path,
                 "used_plan": used_plan,
+                "used_replan": used_replan,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,
@@ -783,7 +812,8 @@ def run_code_then_plan(config_path: str):
                 },
                 "recovered_by": (
                     "generate" if (not used_plan and final_status == "PASS")
-                    else "plan_code" if (used_plan and final_status == "PASS")
+                    else "plan_code" if (used_plan and not used_replan and final_status == "PASS")
+                    else "replan_code" if (used_replan and final_status == "PASS")
                     else None
                 ),
                 "plan_recovery_attempt": (
@@ -817,9 +847,14 @@ def run_code_then_plan(config_path: str):
         print(f"{'=' * 60}")
 
         n_used_plan = sum(1 for t in trajectory_logs if t.get("used_plan", False))
-        n_plan_recovered = sum(
+        n_used_replan = sum(1 for t in trajectory_logs if t.get("used_replan", False))
+        n_planning_recovered = sum(
             1 for t in trajectory_logs
-            if t.get("recovered_by") == "plan_code"
+            if t.get("recovered_by") in ("plan_code", "replan_code")
+        )
+        n_replan_recovered = sum(
+            1 for t in trajectory_logs
+            if t.get("recovered_by") == "replan_code"
         )
 
         print(
@@ -827,8 +862,16 @@ def run_code_then_plan(config_path: str):
             if len(trajectory_logs) > 0 else "  plan 사용: 0/0"
         )
         print(
-            f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} ({n_plan_recovered/n_used_plan*100:.1f}%)"
-            if n_used_plan > 0 else "  plan 복구 성공: 0/0"
+            f"  replan 사용: {n_used_replan}/{len(trajectory_logs)} ({n_used_replan/len(trajectory_logs)*100:.1f}%)"
+            if len(trajectory_logs) > 0 else "  replan 사용: 0/0"
+        )
+        print(
+            f"  planning 복구 성공: {n_planning_recovered}/{n_used_plan} ({n_planning_recovered/n_used_plan*100:.1f}%)"
+            if n_used_plan > 0 else "  planning 복구 성공: 0/0"
+        )
+        print(
+            f"  replan 복구 성공: {n_replan_recovered}/{n_used_replan} ({n_replan_recovered/n_used_replan*100:.1f}%)"
+            if n_used_replan > 0 else "  replan 복구 성공: 0/0"
         )
         print(f"{'=' * 60}")
 
@@ -858,10 +901,13 @@ def run_code_then_plan(config_path: str):
             "avg_latency": avg_latency,
             "avg_calls": avg_calls,
             "extra_summary": extra_summary,
-            "plan_stats": {
+            "planning_stats": {
                 "used_plan": n_used_plan,
-                "plan_recovered": n_plan_recovered,
-                "plan_recovery_rate": n_plan_recovered / n_used_plan if n_used_plan > 0 else 0.0,
+                "used_replan": n_used_replan,
+                "planning_recovered": n_planning_recovered,
+                "replan_recovered": n_replan_recovered,
+                "planning_recovery_rate": n_planning_recovered / n_used_plan if n_used_plan > 0 else 0.0,
+                "replan_recovery_rate": n_replan_recovered / n_used_replan if n_used_replan > 0 else 0.0,
             },
         }
 
@@ -879,13 +925,13 @@ def run_code_then_plan(config_path: str):
 
         for step in step_logs:
             status = step["status"]
-            if status not in ("PASS", "PLAN_DONE"):
+            if status not in ("PASS", "PLAN_DONE", "REPLAN_DONE"):
                 failure_type_counts[status] = failure_type_counts.get(status, 0) + 1
 
         for step in step_logs:
             status = step["status"]
             family = "PASS" if status == "PASS" else str(status).split(":")[0]
-            if family not in ("PASS", "PLAN_DONE"):
+            if family not in ("PASS", "PLAN_DONE", "REPLAN_DONE"):
                 failure_family_counts[family] = failure_family_counts.get(family, 0) + 1
 
         run_analysis = {
@@ -925,7 +971,7 @@ def run_code_then_plan(config_path: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python -m src.orchestration.code_then_plan <config.yaml>")
+        print("Usage: python -m src.orchestration.code_then_replan <config.yaml>")
         sys.exit(1)
 
-    run_code_then_plan(sys.argv[1])
+    run_code_then_replan(sys.argv[1])

@@ -3,7 +3,7 @@ Policy
 
 stage별 오류 유형과, 실패 반복 패턴을 기반으로, repair / replan 중 적절한 전략을 동적으로 선택하는 policy를 구현하고자 함.
 제한된 budget 내에서 문제 해결 확률을 극대화하는 것을 목표로 하고 싶었으나, 사실상 간단한 rule-based로 구현됨.
-우연한 확률에 기대하는 것인지 추가 실험이 필요함.
+
 
 State = {
     failure_type : 현재 실행 결과의 상위 실패 단계 (PASS / EXEC_FAIL / TEST_FAIL)
@@ -28,40 +28,62 @@ Action = {
     re-plan : 문제 입력(및 필요 시 이전 실패 정보)을 바탕으로 
            해결 계획을 생성한 뒤, 그 계획에 따라 코드를 다시 생성하는 단계
 }
-
 Rules:
+
 1. Initial Rule
-   - 처음에는 항상 generate 수행
-   - 첫 plan 호출 이후, re-plan(이전 실패 코드와 메세지를 추가한 plan 프롬프트)을 호출하게 됨.(2번째 plan 호출은 무조건 re-plan 프롬프트 사용)
+   - 처음에는 항상 generate를 수행한다.
+   - 첫 번째 plan 호출은 문제 입력만을 기반으로 plan을 생성한다.
+   - 두 번째 이후의 plan 호출은 re-plan으로 간주하며,
+     이전 plan, 실패 코드, 실패 상태, error_type, error_message를 함께 사용한다.
 
 2. AssertionError Rule
    if failure_type == TEST_FAIL and error_type == AssertionError:
-       → plan
-    - 첫 generate에서 위 패턴이 나오면, plan으로 전환하여 문제 해결을 시도
-    - plan 이후, 같은 패턴이 나오면 re-plan으로 전환
-    
-3. Repair Default Rule
+       → plan / re-plan
+   - 첫 generate 이후 AssertionError가 발생하면 plan으로 전환한다.
+   - plan 이후에도 같은 AssertionError가 발생하면 repair가 아니라 re-plan으로 전환한다.
+   - AssertionError는 semantic failure로 간주하므로 repair의 기본 대상에서 제외한다.
+
+3. Restricted Repair Rule
+   if failure_type == EXEC_FAIL and error_type in {
+       SyntaxError, NameError, TypeError, ImportError
+   }:
+       → repair
+   - repair는 execution-level 오류를 수정하기 위한 보조 전략으로만 사용한다.
+   - repair는 문제 단위로 최대 K번만 허용한다.
+   - 권장 설정은 K = 1이다.
+   - TEST_FAIL, 특히 AssertionError에는 repair를 반복 적용하지 않는다.
+
+4. Repair-to-Replan Rule
+   if repair 이후에도 PASS가 되지 않으면:
+       → re-plan
+   - repair를 여러 번 반복하지 않는다.
+   - repair 이후 동일하거나 새로운 실패가 발생하면, 현재 코드 패치가 한계에 도달한 것으로 보고 re-plan으로 전환한다.
+
+5. Stagnation Rule
+   if (failure_type, error_type) repeated ≥ K:
+       → re-plan
+   - 같은 실패 패턴이 K번 이상 반복되면 동일 전략 반복을 중단한다.
+   - 기존 코드 수정보다 문제 재해석이 필요하다고 판단하여 re-plan으로 전환한다.
+   - 권장 설정은 K = 2이다.
+
+6. Default Planning Rule
    그 외의 경우:
-       → repair (최대 K번 반복)
+       → plan / re-plan
+   - 기존의 Repair Default Rule을 제거한다.
+   - repair를 기본 전략으로 사용하지 않는다.
+   - 명확한 execution-level 오류가 아닌 경우에는 plan 또는 re-plan을 기본 선택으로 둔다.
 
-4. Stagnation Rule
-       if (failure_type,error_type) repeated ≥ K:
-       → plan
-    - 같은 (failure_type, error_type) 패턴이 K번 이상 반복되면, 같은 전략으로 계속 시도하는 것은 의미가 없다고 판단하여 plan으로 전환
-
-5. Budget Constraint Rule
+7. Budget Constraint Rule
    if plan_budget_usage ≥ max_plan_calls:
-       → plan 불가 → 종료
-    - plan 전략은 예산이 허용하는 범위 내에서만 호출 가능하도록 함. 
-    예산이 소진된 경우, 더 이상 plan 전략을 사용할 수 없고 종료함.
+       → plan / re-plan 불가 → 종료
+   - plan과 re-plan은 동일한 planning budget을 공유한다.
+   - 예산이 소진된 경우 더 이상 planning 계열 전략을 호출하지 않고 종료한다.
 
-7. Global Budget Rule
+8. Global Budget Rule
    if total_calls ≥ max_calls:
        → 종료
-    - 전체 시도 횟수가 max_calls에 도달하면, 더 이상 시도할 수 없고 종료함.
+   - 전체 호출 횟수가 max_calls에 도달하면 더 이상 시도하지 않고 종료한다.
 """
-from __future__ import annotations
-
 import gc
 import os
 import sys
@@ -175,6 +197,21 @@ def _extract_code_for_plan(adapter, sample, raw_text: str):
 
 
 # ============================================================
+# Token stats helpers
+# ============================================================
+
+def _compute_token_stats(values: List[int]) -> Dict[str, float]:
+    if not values:
+        return {"min": 0, "max": 0, "avg": 0.0, "count": 0}
+    return {
+        "min": min(values),
+        "max": max(values),
+        "avg": sum(values) / len(values),
+        "count": len(values),
+    }
+
+
+# ============================================================
 # Policy helpers
 # ============================================================
 
@@ -182,7 +219,7 @@ def _extract_code_for_plan(adapter, sample, raw_text: str):
 class StepRecord:
     fail: str
     error_type: str
-    action: str   # generate / repair / plan
+    action: str   # generate / repair / plan / replan
 
 
 def coarse_fail(status: str) -> str:
@@ -203,7 +240,7 @@ def make_signature(fail: str, error_type: str) -> Tuple[str, str]:
 
 
 def num_plan_calls(history: List[StepRecord]) -> int:
-    return sum(1 for x in history if x.action == "plan")
+    return sum(1 for x in history if x.action in {"plan", "replan"})
 
 
 def same_signature_run_length(history: List[StepRecord]) -> int:
@@ -263,6 +300,55 @@ def make_policy_state(history: List[StepRecord]) -> Dict[str, Any]:
 def plan_available(history: List[StepRecord], policy_cfg: Dict[str, Any]) -> bool:
     max_plan_calls = policy_cfg.get("max_plan_calls", 3)
     return num_plan_calls(history) < max_plan_calls
+
+
+def repair_available(total_repair_count: int, policy_cfg: Dict[str, Any]) -> bool:
+    max_repair_steps = policy_cfg.get("max_repair_steps", 1)
+    return total_repair_count < max_repair_steps
+
+
+def choose_next_action(
+    *,
+    history: List[StepRecord],
+    current_fail: str,
+    current_error: str,
+    policy_cfg: Dict[str, Any],
+    total_repair_count: int,
+) -> str:
+    """Route failures to repair or plan/replan under a limited budget."""
+    if current_fail == "PASS":
+        return "stop"
+
+    stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
+
+    # Semantic failure: re-interpret the task instead of repeatedly patching code.
+    if current_fail == "TEST_FAIL" and current_error == "AssertionError":
+        return "plan"
+
+    # Repeated same failure means the current strategy is stagnant.
+    if same_signature_run_length(history) >= stagnation_threshold:
+        return "plan"
+
+    # Empty/extraction/code failures are usually better handled by regenerate-with-plan.
+    if current_fail == "CODE_FAIL":
+        return "plan"
+
+    # Execution failures get at most a small number of cheap repair attempts.
+    repairable_exec_errors = {
+        "SyntaxError",
+        "NameError",
+        "TypeError",
+        "ImportError",
+        "IndentationError",
+        "UnboundLocalError",
+    }
+    if current_fail == "EXEC_FAIL":
+        if current_error in repairable_exec_errors and repair_available(total_repair_count, policy_cfg):
+            return "repair"
+        return "plan"
+
+    # Default: prefer plan/replan over low-yield repeated repair.
+    return "plan"
 
 
 # ============================================================
@@ -349,7 +435,6 @@ def _run_plan_then_code_step(
     error_message: str | None = None,
     previous_code: str | None = None,
 ):
-    
     if previous_plan is None:
         planner_prompt = build_planner_prompt_for_sample(sample)
     else:
@@ -607,7 +692,7 @@ def run_policy_loop(config_path: str):
 
     run_id = make_run_id(config)
     seed = run_cfg.get("seed", 42)
-    
+
     stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
 
     dataset_name = dataset_cfg.get("name", "humaneval")
@@ -619,7 +704,7 @@ def run_policy_loop(config_path: str):
 
     planner_cfg_inner = model_cfg.get("planner", {})
     planner_max_tokens = planner_cfg_inner.get("max_new_tokens", 256)
-    
+
     coder_cfg_inner = model_cfg.get("coder", {})
     coder_max_tokens = coder_cfg_inner.get("max_new_tokens", max_new_tokens)
 
@@ -639,7 +724,7 @@ def run_policy_loop(config_path: str):
     save_problem_summary = logging_cfg.get("save_problem_summary", True)
     save_run_analysis = logging_cfg.get("save_run_analysis", True)
     save_code = logging_cfg.get("save_code", True)
-    save_failure_examples  = logging_cfg.get("failure_examples", True)
+    save_failure_examples = logging_cfg.get("failure_examples", True)
 
     debug_mode = debug_cfg.get("mode", "run")
 
@@ -695,6 +780,10 @@ def run_policy_loop(config_path: str):
     eval_results = []
     failure_examples = {}
 
+    # run-level token tracking
+    all_input_tokens: List[int] = []
+    all_output_tokens: List[int] = []
+
     samples_to_run = min(num_samples, len(task))
 
     for i in range(samples_to_run):
@@ -709,7 +798,12 @@ def run_policy_loop(config_path: str):
         cumulative_total_tokens = 0
         cumulative_latency = 0.0
 
+        # problem-level token tracking
+        problem_input_tokens: List[int] = []
+        problem_output_tokens: List[int] = []
+
         call_count = 0
+        total_repair_count = 0
         num_exec_fail = 0
         num_test_fail = 0
         transition_path: List[str] = []
@@ -739,6 +833,12 @@ def run_policy_loop(config_path: str):
             debug_mode=debug_mode,
             attempt_idx=attempt_idx,
         )
+
+        # token tracking
+        all_input_tokens.append(gen["input_tokens"])
+        all_output_tokens.append(gen["output_tokens"])
+        problem_input_tokens.append(gen["input_tokens"])
+        problem_output_tokens.append(gen["output_tokens"])
 
         call_count += 1
         cumulative_input_tokens += gen["input_tokens"]
@@ -816,24 +916,27 @@ def run_policy_loop(config_path: str):
                     print(f"  stop: 🛑 {stop_reason}")
                     break
 
-                next_action = forced_next_action
+                next_action = forced_next_action or choose_next_action(
+                    history=history,
+                    current_fail=current_fail,
+                    current_error=current_error,
+                    policy_cfg=policy_cfg,
+                    total_repair_count=total_repair_count,
+                )
                 forced_next_action = None
 
-                if next_action != "plan":
-                    if (
-                        not plan_available(history, policy_cfg)
-                        and current_fail == "TEST_FAIL"
-                        and current_error == "AssertionError"
-                    ):
-                        stop_reason = "plan_budget_exhausted"
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
+                if next_action == "stop":
+                    stop_reason = "policy_stop"
+                    print(f"  stop: 🛑 {stop_reason}")
+                    break
 
-                if next_action == "plan" or (current_fail == "TEST_FAIL" and current_error == "AssertionError"):
+                if next_action == "plan":
                     if not plan_available(history, policy_cfg):
                         stop_reason = "plan_budget_exhausted"
                         print(f"  stop: 🛑 {stop_reason}")
                         break
+
+                    plan_action_name = "plan" if planner_output is None else "replan"
 
                     out = _run_plan_then_code_step(
                         model=model,
@@ -852,6 +955,12 @@ def run_policy_loop(config_path: str):
                         previous_code=previous_code,
                     )
 
+                    # token tracking: planner call
+                    all_input_tokens.append(out["plan_input_tokens"])
+                    all_output_tokens.append(out["plan_output_tokens"])
+                    problem_input_tokens.append(out["plan_input_tokens"])
+                    problem_output_tokens.append(out["plan_output_tokens"])
+
                     call_count += 1
                     cumulative_input_tokens += out["plan_input_tokens"]
                     cumulative_output_tokens += out["plan_output_tokens"]
@@ -867,8 +976,8 @@ def run_policy_loop(config_path: str):
                         trajectory_id=trajectory_id,
                         step_id=step_id,
                         call_index=call_count - 1,
-                        stage="plan",
-                        policy_action="plan",
+                        stage=plan_action_name,
+                        policy_action=plan_action_name,
                         policy_state=_make_policy_state_for_log(history),
                         policy_stop=False,
                         policy_stop_reason=None,
@@ -892,8 +1001,14 @@ def run_policy_loop(config_path: str):
                         planner_output=out["planner_output"],
                         is_planner=True,
                     )
-                    transition_path.append("PLAN_DONE")
+                    transition_path.append(f"{plan_action_name.upper()}_DONE")
                     step_id += 1
+
+                    # token tracking: plan_code call
+                    all_input_tokens.append(out["input_tokens"])
+                    all_output_tokens.append(out["output_tokens"])
+                    problem_input_tokens.append(out["input_tokens"])
+                    problem_output_tokens.append(out["output_tokens"])
 
                     call_count += 1
                     cumulative_input_tokens += out["input_tokens"]
@@ -916,7 +1031,7 @@ def run_policy_loop(config_path: str):
                     if current_fail == "TEST_FAIL":
                         num_test_fail += 1
 
-                    history.append(StepRecord(fail=current_fail, error_type=current_error, action="plan"))
+                    history.append(StepRecord(fail=current_fail, error_type=current_error, action=plan_action_name))
 
                     _append_step_log(
                         step_logs,
@@ -928,7 +1043,7 @@ def run_policy_loop(config_path: str):
                         step_id=step_id,
                         call_index=call_count - 1,
                         stage="plan_code",
-                        policy_action="plan",
+                        policy_action=plan_action_name,
                         policy_state=_make_policy_state_for_log(history[:-1]),
                         policy_stop=False,
                         policy_stop_reason=None,
@@ -961,7 +1076,7 @@ def run_policy_loop(config_path: str):
                     attempt_idx += 1
 
                     if final_attempt_record.passed:
-                        recovered_by = "plan_code"
+                        recovered_by = "plan_code" if plan_action_name == "plan" else "replan_code"
                         break
 
                     if current_fail == "TEST_FAIL" and current_error == "AssertionError":
@@ -969,7 +1084,7 @@ def run_policy_loop(config_path: str):
                         continue
 
                 repair_count = 0
-                while repair_count < max_repair_steps and not final_attempt_record.passed:
+                while repair_available(total_repair_count, policy_cfg) and not final_attempt_record.passed:
                     if call_count >= max_calls:
                         stop_reason = "max_calls_reached"
                         print(f"  stop: 🛑 {stop_reason}")
@@ -989,6 +1104,12 @@ def run_policy_loop(config_path: str):
                         debug_mode=debug_mode,
                         attempt_idx=attempt_idx,
                     )
+
+                    # token tracking: repair call
+                    all_input_tokens.append(out["input_tokens"])
+                    all_output_tokens.append(out["output_tokens"])
+                    problem_input_tokens.append(out["input_tokens"])
+                    problem_output_tokens.append(out["output_tokens"])
 
                     call_count += 1
                     cumulative_input_tokens += out["input_tokens"]
@@ -1035,7 +1156,7 @@ def run_policy_loop(config_path: str):
                         total_tokens=out["total_tokens"],
                         latency_sec=out["latency_sec"],
                         is_repair=True,
-                        is_retry=repair_count > 0,
+                        is_retry=total_repair_count > 0,
                     )
                     step_id += 1
 
@@ -1056,21 +1177,14 @@ def run_policy_loop(config_path: str):
                     )
                     attempt_idx += 1
                     repair_count += 1
+                    total_repair_count += 1
 
                     if final_attempt_record.passed:
                         recovered_by = "repair"
                         break
 
+                    # After a failed repair, avoid repeated patching of semantic failures.
                     if current_fail == "TEST_FAIL":
-                        if same_signature_run_length(history) >= stagnation_threshold:
-                            if plan_available(history, policy_cfg):
-                                forced_next_action = "plan"
-                                break
-                            stop_reason = "plan_budget_exhausted"
-                            print(f"  stop: 🛑 {stop_reason}")
-                            break
-
-                    if current_fail == "EXEC_FAIL" and same_signature_run_length(history) >= stagnation_threshold:
                         if plan_available(history, policy_cfg):
                             forced_next_action = "plan"
                             break
@@ -1078,10 +1192,19 @@ def run_policy_loop(config_path: str):
                         print(f"  stop: 🛑 {stop_reason}")
                         break
 
+                    if current_fail == "EXEC_FAIL":
+                        if same_signature_run_length(history) >= stagnation_threshold or not repair_available(total_repair_count, policy_cfg):
+                            if plan_available(history, policy_cfg):
+                                forced_next_action = "plan"
+                                break
+                            stop_reason = "plan_budget_exhausted"
+                            print(f"  stop: 🛑 {stop_reason}")
+                            break
+
                 if stop_reason is not None or final_attempt_record.passed:
                     break
 
-                if same_signature_run_length(history) >= stagnation_threshold:
+                if same_signature_run_length(history) >= stagnation_threshold or not repair_available(total_repair_count, policy_cfg):
                     if plan_available(history, policy_cfg):
                         forced_next_action = "plan"
                         continue
@@ -1098,6 +1221,28 @@ def run_policy_loop(config_path: str):
 
         final_status = final_attempt_record.status
         failure_family = "PASS" if final_status == "PASS" else coarse_fail(final_status)
+
+        initial_status = None
+        initial_failure_family = None
+        success_at_call = None
+
+        for s in step_logs:
+            if s["trajectory_id"] != trajectory_id:
+                continue
+
+            if s["stage"] == "generate":
+                initial_status = s["status"]
+                initial_failure_family = "PASS" if s["status"] == "PASS" else str(s["status"]).split(":")[0]
+
+            if s["status"] == "PASS" and success_at_call is None:
+                success_at_call = s["call_index"] + 1
+
+        initial_failed = initial_status != "PASS"
+        calls_to_recovery = (
+            success_at_call - 1
+            if initial_failed and success_at_call is not None
+            else None
+        )
 
         trajectory_entry = {
             "run_id": run_id,
@@ -1118,17 +1263,25 @@ def run_policy_loop(config_path: str):
             "num_exec_fail": num_exec_fail,
             "num_test_fail": num_test_fail,
             "transition_path": transition_path,
-            "used_plan": any(x["stage"] == "plan" for x in step_logs if x["trajectory_id"] == trajectory_id),
+            "used_plan": any(x["stage"] in {"plan", "replan"} for x in step_logs if x["trajectory_id"] == trajectory_id),
             "used_repair": any(x["stage"] == "repair" for x in step_logs if x["trajectory_id"] == trajectory_id),
             "recovered_by": recovered_by,
             "stopped_by_policy": stop_reason is not None and not final_attempt_record.passed,
             "stop_reason": stop_reason,
             "num_plan_calls": num_plan_calls(history),
+            "num_repair_calls": total_repair_count,
             "budget_used": {
                 "tokens": cumulative_total_tokens,
                 "calls": call_count,
                 "latency": cumulative_latency,
             },
+            "input_token_stats": _compute_token_stats(problem_input_tokens),
+            "output_token_stats": _compute_token_stats(problem_output_tokens),
+            "initial_status": initial_status,
+            "initial_failure_family": initial_failure_family,
+            "initial_failed": initial_failed,
+            "success_at_call": success_at_call,
+            "calls_to_recovery": calls_to_recovery,
         }
 
         trajectory_logs.append(trajectory_entry)
@@ -1137,8 +1290,11 @@ def run_policy_loop(config_path: str):
             torch.cuda.empty_cache()
         gc.collect()
 
-    # ── 5. 결과 요약 ──
-        # ── 5. 결과 요약 ──
+    # run-level token stats
+    run_input_token_stats = _compute_token_stats(all_input_tokens)
+    run_output_token_stats = _compute_token_stats(all_output_tokens)
+
+    # ── 결과 요약 ──
     summary = summarize_phase1_results(eval_results)
 
     print(f"\n{'=' * 60}")
@@ -1157,15 +1313,27 @@ def run_policy_loop(config_path: str):
     print(f"  run_test_failed: {extra_summary['run_test_failed']}")
     print(f"{'=' * 60}")
 
+    print(
+        f"  input_tokens min/avg/max: "
+        f"{run_input_token_stats['min']} / "
+        f"{run_input_token_stats['avg']:.1f} / "
+        f"{run_input_token_stats['max']}"
+    )
+    print(
+        f"  output_tokens min/avg/max: "
+        f"{run_output_token_stats['min']} / "
+        f"{run_output_token_stats['avg']:.1f} / "
+        f"{run_output_token_stats['max']}"
+    )
+    print(f"{'=' * 60}")
+
     total = len(trajectory_logs)
 
-    # -----------------------------
     # problem-level stats
-    # -----------------------------
     n_used_plan_problems = sum(1 for t in trajectory_logs if t.get("used_plan", False))
     n_plan_recovered_problems = sum(
         1 for t in trajectory_logs
-        if t.get("recovered_by") == "plan_code"
+        if t.get("recovered_by") in {"plan_code", "replan_code"}
     )
 
     n_used_repair_problems = sum(1 for t in trajectory_logs if t.get("used_repair", False))
@@ -1174,9 +1342,7 @@ def run_policy_loop(config_path: str):
         if t.get("recovered_by") == "repair"
     )
 
-    # -----------------------------
     # call-level stats
-    # -----------------------------
     n_plan_calls = sum(1 for s in step_logs if s.get("stage") == "plan_code")
     n_plan_call_successes = sum(
         1 for s in step_logs
@@ -1228,6 +1394,10 @@ def run_policy_loop(config_path: str):
                 "execution_success_rate": summary["execution_success_rate"],
                 "conditional_pass": summary["conditional_pass"],
                 "extra_summary": extra_summary,
+                "token_stats": {
+                    "input": run_input_token_stats,
+                    "output": run_output_token_stats,
+                },
                 "policy_stats": {
                     "problem_level": {
                         "plan_used_problems": n_used_plan_problems,
@@ -1274,11 +1444,15 @@ def run_policy_loop(config_path: str):
                 "run_id": run_id,
                 "dataset": dataset_name,
                 "method": method_name,
+                "token_stats": {
+                    "input": run_input_token_stats,
+                    "output": run_output_token_stats,
+                },
             },
             os.path.join(output_dir, "analysis.json"),
         )
-        
-    if save_failure_examples and failure_examples :
+
+    if save_failure_examples and failure_examples:
         save_result(failure_examples, os.path.join(output_dir, "failure_examples.json"))
 
     print("✅ policy_loop 완료")
