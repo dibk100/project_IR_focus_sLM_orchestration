@@ -19,10 +19,10 @@ method:
   name: "repair_loop"
 
 budget:
-  max_calls: 20
+  max_calls: 10
 
 output:
-  dir: "results/phase2_qwen/humaneval/repair"
+  dir: "results/phase2_qwen/humaneval_fin/repair"
 
 logging:
   save_step_level: true

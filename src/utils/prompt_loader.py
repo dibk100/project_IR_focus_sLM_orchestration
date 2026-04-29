@@ -100,7 +100,7 @@ def build_replanner_prompt_for_sample(
     return f"""You are revising a Python solution plan after a failed attempt.
 
 Task:
-{sample.prompt}
+{sample.problem_text}
 
 Previous plan:
 {previous_plan}

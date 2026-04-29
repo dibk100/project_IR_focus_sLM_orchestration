@@ -323,6 +323,8 @@ def run_code_then_plan_repair(config_path: str):
             latest_plan = None
             latest_code = None
             planning_cycle_count = 0
+            last_success_stage = None
+            last_success_cycle = None
 
             # =========================================================
             # Stage 1: Direct generation
@@ -389,7 +391,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(step_entry)
+                    if save_step_level:
+                        step_logs.append(step_entry)
                     print(f"  generate: ❌ {current_status}")
 
                     _collect_failure_example(
@@ -444,6 +447,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = generated_code
                     current_status = attempt_record.status
+                    
+                    if attempt_record.passed:
+                        last_success_stage = "generate"
+                        last_success_cycle = 0
+                        
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -486,7 +494,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(step_entry)
+                    if save_step_level:
+                        step_logs.append(step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                     print(f"  generate: {pretty}")
@@ -580,8 +589,9 @@ def run_code_then_plan_repair(config_path: str):
                 }
                 if hasattr(sample, "entry_point"):
                     plan_step_entry["entry_point"] = sample.entry_point
-
-                step_logs.append(plan_step_entry)
+    
+                if save_step_level:
+                    step_logs.append(plan_step_entry)
                 print(f"  plan[{planning_cycle_count}]: 📝 {latest_plan[:80].replace(chr(10), ' ')}...")
 
                 # ----------------------------
@@ -653,7 +663,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         code_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code_step_entry)
+                    if save_step_level:
+                        step_logs.append(code_step_entry)
                     print(f"  plan_code[{planning_cycle_count}]: ❌ {current_status}")
 
                     _collect_failure_example(
@@ -708,6 +719,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = code_generated
                     current_status = code_record.status
+                    
+                    if code_record.passed:
+                        last_success_stage = "plan_code"
+                        last_success_cycle = planning_cycle_count
+                    
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -750,7 +766,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         code_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code_step_entry)
+                    if save_step_level:
+                        step_logs.append(code_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                     print(f"  plan_code[{planning_cycle_count}]: {pretty}")
@@ -852,7 +869,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         repair_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(repair_step_entry)
+                    if save_step_level:
+                        step_logs.append(repair_step_entry)
                     print(f"  repair[{planning_cycle_count}]: ❌ {current_status}")
 
                     _collect_failure_example(
@@ -907,6 +925,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = repaired_code
                     current_status = repair_record.status
+                    
+                    if repair_record.passed:
+                        last_success_stage = "repair"
+                        last_success_cycle = planning_cycle_count
+                    
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -949,7 +972,8 @@ def run_code_then_plan_repair(config_path: str):
                     if hasattr(sample, "entry_point"):
                         repair_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(repair_step_entry)
+                    if save_step_level:
+                        step_logs.append(repair_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                     print(f"  repair[{planning_cycle_count}]: {pretty}")
@@ -975,6 +999,7 @@ def run_code_then_plan_repair(config_path: str):
             if final_attempt_record is None:
                 final_attempt_record = _make_empty_output_record("No attempt record was produced.")
 
+            setattr(final_exec_result, "num_calls", call_count)
             eval_results.append(final_exec_result)
 
             final_status = final_attempt_record.status
@@ -1006,15 +1031,17 @@ def run_code_then_plan_repair(config_path: str):
                     "calls": call_count,
                     "latency": cumulative_latency,
                 },
-                "recovered_by": (
-                    "generate" if (not used_plan and final_status == "PASS")
-                    else "plan_code" if (used_plan and not used_repair and final_status == "PASS")
-                    else "repair" if (used_repair and final_status == "PASS")
+                "recovered_by": last_success_stage,
+                "planning_recovery_attempt": (
+                    last_success_cycle if last_success_stage in ("plan_code", "repair")
                     else None
                 ),
-                "planning_recovery_attempt": (
-                    planning_cycle_count if (used_plan and final_status == "PASS")
-                    else None
+                "planning_cycle_count": planning_cycle_count,
+                "planning_cycle_call_cost": planning_cycle_count * 2,
+                "repair_call_count": sum(
+                    1 for s in step_logs
+                    if s.get("trajectory_id") == trajectory_id
+                    and s.get("stage") == "repair"
                 ),
             }
 
@@ -1024,16 +1051,17 @@ def run_code_then_plan_repair(config_path: str):
                 torch.cuda.empty_cache()
             gc.collect()
 
-        summary = summarize_phase1_results(eval_results)
+        summary = summarize_phase1_results(eval_results, k=max_calls)
+        success_key = f"success@{max_calls}"
 
         print(f"\n{'=' * 60}")
         print("📊 결과 요약")
         print(f"  총 문제: {summary['total']}")
-        print(f"  통과: {summary['passed']}")
+        print(f"  성공: {summary['success']}")
         print(f"  실행 성공: {summary['exec_success']}")
-        print(f"  pass@1: {summary['pass@1']:.4f}")
+        print(f"  {success_key}: {summary[success_key]:.4f}")
         print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
-        print(f"  conditional_pass: {summary['conditional_pass']:.4f}")
+        print(f"  conditional_success: {summary['conditional_success']:.4f}")
         print(f"{'=' * 60}")
 
         extra_summary = summarize_failure_breakdown(eval_results)
@@ -1074,26 +1102,52 @@ def run_code_then_plan_repair(config_path: str):
         # -----------------------------
         # call-level stats (NEW)
         # -----------------------------
-        n_plan_calls = sum(1 for s in step_logs if s.get("stage") == "plan_code")
-        n_plan_call_successes = sum(
+        n_planning_cycles = sum(
+            1 for s in step_logs
+            if s.get("stage") == "plan"
+        )
+
+        n_planning_code_successes = sum(
             1 for s in step_logs
             if s.get("stage") == "plan_code" and s.get("status") == "PASS"
         )
 
-        n_repair_calls = sum(1 for s in step_logs if s.get("stage") == "repair")
+        planning_cycle_success_rate = (
+            n_planning_code_successes / n_planning_cycles
+            if n_planning_cycles > 0 else 0.0
+        )
+        
+        n_repair_calls = sum(
+            1 for s in step_logs
+            if s.get("stage") == "repair"
+        )
+
         n_repair_call_successes = sum(
             1 for s in step_logs
             if s.get("stage") == "repair" and s.get("status") == "PASS"
         )
 
-        print(
-            f"  [call-level] plan 호출 누적: {n_plan_calls}, 성공: {n_plan_call_successes}/{n_plan_calls} ({n_plan_call_successes/n_plan_calls*100:.1f}%)"
-            if n_plan_calls > 0 else "  [call-level] plan 호출 누적: 0, 성공: 0/0"
+        repair_call_success_rate = (
+            n_repair_call_successes / n_repair_calls
+            if n_repair_calls > 0 else 0.0
         )
 
+        planning_cycle_call_cost = n_planning_cycles * 2
         print(
-            f"  [call-level] repair 호출 누적: {n_repair_calls}, 성공: {n_repair_call_successes}/{n_repair_calls} ({n_repair_call_successes/n_repair_calls*100:.1f}%)"
-            if n_repair_calls > 0 else "  [call-level] repair 호출 누적: 0, 성공: 0/0"
+            f"  [planning-cycle] 사용: {n_planning_cycles} cycles "
+            f"({planning_cycle_call_cost} calls), "
+            f"성공: {n_planning_code_successes}/{n_planning_cycles} "
+            f"({planning_cycle_success_rate*100:.1f}%)"
+            if n_planning_cycles > 0
+            else "  [planning-cycle] 사용: 0 cycles (0 calls), 성공: 0/0"
+        )
+        
+        print(
+        f"  [repair-call] 사용: {n_repair_calls} calls, "
+        f"성공: {n_repair_call_successes}/{n_repair_calls} "
+        f"({repair_call_success_rate*100:.1f}%)"
+        if n_repair_calls > 0
+        else "  [repair-call] 사용: 0 calls, 성공: 0/0"
         )
         
         # repair가 plan 이후에만 쓰이므로
@@ -1131,11 +1185,13 @@ def run_code_then_plan_repair(config_path: str):
             "run_id": run_id,
             "dataset": dataset_name,
             "method": method_name,
+            "max_calls": max_calls,
             "total_problems": summary["total"],
-            "num_pass": summary["passed"],
-            "pass_at_1": summary["pass@1"],
+            "num_success": summary["success"],
+            "success_metric_name": success_key,
+            "success_at_k": summary[success_key],
             "execution_success_rate": summary["execution_success_rate"],
-            "conditional_pass": summary["conditional_pass"],
+            "conditional_success": summary["conditional_success"],
             "avg_tokens": avg_tokens,
             "avg_latency": avg_latency,
             "avg_calls": avg_calls,
@@ -1149,18 +1205,22 @@ def run_code_then_plan_repair(config_path: str):
                 "repair_recovery_rate": n_repair_recovered / n_used_repair if n_used_repair > 0 else 0.0,
             },
             "call_level": {
-                "plan_call_count": n_plan_calls,
-                "plan_call_success_count": n_plan_call_successes,
-                "plan_call_success_rate": (
-                    n_plan_call_successes / n_plan_calls if n_plan_calls > 0 else 0.0
-                ),
-                "repair_call_count": n_repair_calls,
-                "repair_call_success_count": n_repair_call_successes,
-                "repair_call_success_rate": (
-                    n_repair_call_successes / n_repair_calls if n_repair_calls > 0 else 0.0
-                ),
-            },
-            "plan_then_repair_success" : plan_then_repair_success,
+            "planning_cycle_count": n_planning_cycles,
+            "planning_cycle_call_cost": planning_cycle_call_cost,
+            "planning_code_success_count": n_planning_code_successes,
+            "planning_cycle_success_rate": planning_cycle_success_rate,
+
+            "repair_call_count": n_repair_calls,
+            "repair_success_count": n_repair_call_successes,
+            "repair_success_rate": repair_call_success_rate,
+
+            "plan_then_repair_call_count": len(plan_then_repair_calls),
+            "plan_then_repair_success_count": plan_then_repair_success,
+            "plan_then_repair_success_rate": (
+                plan_then_repair_success / len(plan_then_repair_calls)
+                if len(plan_then_repair_calls) > 0 else 0.0
+            ),
+        }
         }
 
         transition_counts = {}

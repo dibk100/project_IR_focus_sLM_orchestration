@@ -1,13 +1,13 @@
 # Phase 2: HumanEval Code-Then-Plan
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/phase2_qwen/configs/humaneval_code_then_plan_repair.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/phase2_qwen/configs_mbpp/mbpp_code_then_plan_repair.yaml
 
 run:
   seed: 42
 
 dataset:
-  name: humaneval        # humaneval | mbpp
-  num_samples: 164        
+  name: mbpp        # humaneval | mbpp
+  num_samples: 374       
 
 method:
   name: code_then_plan_repair
@@ -32,10 +32,10 @@ budget:
   max_calls: 10           # generate + plan + plan_code + repair
   
 output:
-  dir: "results/phase2_qwen/humaneval_v2/code_then_plan_repair"
+  dir: "results/phase2_qwen/mbpp/code_then_plan_repair"
 
 logging:
-  save_step_level: true          # 필수 (stage별 토큰 확인)
+  save_step_level: false          # 필수 (stage별 토큰 확인)
   save_trajectory_level: false
   save_problem_summary: true
   save_run_analysis: false

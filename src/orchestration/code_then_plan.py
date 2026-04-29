@@ -367,7 +367,9 @@ def run_code_then_plan(config_path: str):
                     if hasattr(sample, "entry_point"):
                         step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(step_entry)
+                    
+                    if save_step_level:
+                        step_logs.append(step_entry)
                     print(f"  generate: ❌ {current_status}")
 
                     _collect_failure_example(
@@ -464,7 +466,8 @@ def run_code_then_plan(config_path: str):
                     if hasattr(sample, "entry_point"):
                         step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(step_entry)
+                    if save_step_level:
+                        step_logs.append(step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                     print(f"  generate: {pretty}")
@@ -555,7 +558,8 @@ def run_code_then_plan(config_path: str):
                 if hasattr(sample, "entry_point"):
                     plan_step_entry["entry_point"] = sample.entry_point
 
-                step_logs.append(plan_step_entry)
+                if save_step_level:
+                    step_logs.append(plan_step_entry)
                 print(f"  plan[{plan_attempt_count}]: 📝 {planner_output[:80].replace(chr(10), ' ')}...")
 
                 # 2) code generation from plan
@@ -624,8 +628,8 @@ def run_code_then_plan(config_path: str):
                     }
                     if hasattr(sample, "entry_point"):
                         code2_step_entry["entry_point"] = sample.entry_point
-
-                    step_logs.append(code2_step_entry)
+                    if save_step_level:
+                        step_logs.append(code2_step_entry)
                     print(f"  plan_code[{plan_attempt_count}]: ❌ {current_status}")
 
                     _collect_failure_example(
@@ -725,7 +729,8 @@ def run_code_then_plan(config_path: str):
                     if hasattr(sample, "entry_point"):
                         code2_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code2_step_entry)
+                    if save_step_level:
+                        step_logs.append(code2_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
                     print(f"  plan_code[{plan_attempt_count}]: {pretty}")
@@ -750,9 +755,21 @@ def run_code_then_plan(config_path: str):
                 final_exec_result = _make_empty_output_record("No executable result was produced.")
             if final_attempt_record is None:
                 final_attempt_record = _make_empty_output_record("No attempt record was produced.")
-
-            eval_results.append(final_exec_result)
-
+            
+            setattr(final_exec_result, "num_calls", call_count)
+            # eval_results.append(final_exec_result)
+            eval_results.append(SimpleNamespace(
+                status=final_attempt_record.status,
+                passed=final_attempt_record.passed,
+                exec_ok=final_attempt_record.exec_ok,
+                test_pass=final_attempt_record.test_pass,
+                tests_passed=final_attempt_record.tests_passed,
+                tests_total=final_attempt_record.tests_total,
+                error_type=getattr(final_attempt_record, "error_type", None),
+                error_stage=getattr(final_attempt_record, "error_stage", None),
+                num_calls=call_count,
+            ))
+            
             final_status = final_attempt_record.status
             failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
 
@@ -783,7 +800,7 @@ def run_code_then_plan(config_path: str):
                 },
                 "recovered_by": (
                     "generate" if (not used_plan and final_status == "PASS")
-                    else "plan_code" if (used_plan and final_status == "PASS")
+                    else "plan_code" if (used_plan and final_status == "PASS")      # plan → code → PASS
                     else None
                 ),
                 "plan_recovery_attempt": (
@@ -792,22 +809,25 @@ def run_code_then_plan(config_path: str):
                 ),
             }
 
-            trajectory_logs.append(trajectory_entry)
+            if save_trajectory_level:
+                trajectory_logs.append(trajectory_entry)
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            del final_exec_result
             gc.collect()
 
-        summary = summarize_phase1_results(eval_results)
-
+        summary = summarize_phase1_results(eval_results, k=max_calls)
+        success_key = f"success@{max_calls}"
+        
         print(f"\n{'=' * 60}")
         print("📊 결과 요약")
         print(f"  총 문제: {summary['total']}")
-        print(f"  통과: {summary['passed']}")
+        print(f"  성공: {summary['success']}")
         print(f"  실행 성공: {summary['exec_success']}")
-        print(f"  pass@1: {summary['pass@1']:.4f}")
+        print(f"  {success_key}: {summary[success_key]:.4f}")
         print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
-        print(f"  conditional_pass: {summary['conditional_pass']:.4f}")
+        print(f"  conditional_success: {summary['conditional_success']:.4f}")
         print(f"{'=' * 60}")
 
         extra_summary = summarize_failure_breakdown(eval_results)
@@ -849,18 +869,20 @@ def run_code_then_plan(config_path: str):
             "run_id": run_id,
             "dataset": dataset_name,
             "method": method_name,
+            "max_calls": max_calls,
             "total_problems": summary["total"],
-            "num_pass": summary["passed"],
-            "pass_at_1": summary["pass@1"],
+            "num_success": summary["success"],
+            "success_metric_name": success_key,
+            "success_at_k": summary[success_key],
             "execution_success_rate": summary["execution_success_rate"],
-            "conditional_pass": summary["conditional_pass"],
+            "conditional_success": summary["conditional_success"],
             "avg_tokens": avg_tokens,
             "avg_latency": avg_latency,
             "avg_calls": avg_calls,
             "extra_summary": extra_summary,
             "plan_stats": {
                 "used_plan": n_used_plan,
-                "plan_recovered": n_plan_recovered,
+                "plan_recovered": n_plan_recovered,                 # PLANNER 사용해서 최종적으로 PASS까지 간 문제의 수
                 "plan_recovery_rate": n_plan_recovered / n_used_plan if n_used_plan > 0 else 0.0,
             },
         }
