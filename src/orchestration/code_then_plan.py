@@ -168,6 +168,20 @@ def _make_empty_output_record(message: str):
     )
 
 
+def _extract_entropy_fields(gen_result: dict) -> dict:
+    """
+    hf_model.generate() 반환값에서 entropy 관련 필드를 추출한다.
+    hf_model.py가 수정되지 않은 환경에서도 안전하게 0.0으로 fallback한다.
+    """
+    return {
+        "avg_entropy":          gen_result.get("avg_entropy", 0.0),
+        "max_entropy":          gen_result.get("max_entropy", 0.0),
+        "entropy_std":          gen_result.get("entropy_std", 0.0),
+        "first_20pct_entropy":  gen_result.get("first_20pct_entropy", 0.0),
+        "last_20pct_entropy":   gen_result.get("last_20pct_entropy", 0.0),
+    }
+
+
 def _extract_code_for_planner(adapter, sample, raw_text: str):
     if hasattr(adapter, "extract_code_for_planner"):
         return adapter.extract_code_for_planner(sample, raw_text)
@@ -317,6 +331,7 @@ def run_code_then_plan(config_path: str):
                 input_tokens = gen_result["input_tokens"]
                 output_tokens = gen_result["output_tokens"]
                 total_tokens = gen_result["total_tokens"]
+                #entropy_fields = _extract_entropy_fields(gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += input_tokens
@@ -350,6 +365,8 @@ def run_code_then_plan(config_path: str):
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,
                         "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -367,7 +384,6 @@ def run_code_then_plan(config_path: str):
                     if hasattr(sample, "entry_point"):
                         step_entry["entry_point"] = sample.entry_point
 
-                    
                     if save_step_level:
                         step_logs.append(step_entry)
                     print(f"  generate: ❌ {current_status}")
@@ -449,6 +465,8 @@ def run_code_then_plan(config_path: str):
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,
                         "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
                         "code": generated_code if save_code else None,
                         "planner_output": None,
                         "exec_ok": attempt_record.exec_ok,
@@ -470,7 +488,7 @@ def run_code_then_plan(config_path: str):
                         step_logs.append(step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  generate: {pretty}")
+                    print(f"  generate: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
@@ -496,7 +514,7 @@ def run_code_then_plan(config_path: str):
                 used_plan = True
                 plan_attempt_count += 1
 
-                # 1) generic planner
+                # ── 1) plan
                 planner_prompt = build_planner_prompt_for_sample(sample)
 
                 orig_tokens = model.max_new_tokens
@@ -513,6 +531,7 @@ def run_code_then_plan(config_path: str):
                 plan_input_tokens = plan_gen_result["input_tokens"]
                 plan_output_tokens = plan_gen_result["output_tokens"]
                 plan_total_tokens = plan_gen_result["total_tokens"]
+                # plan_entropy_fields = _extract_entropy_fields(plan_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += plan_input_tokens
@@ -541,6 +560,8 @@ def run_code_then_plan(config_path: str):
                     "output_tokens": plan_output_tokens,
                     "total_tokens": plan_total_tokens,
                     "latency_sec": plan_latency,
+                    # ── entropy (planner 자체의 불확실성)
+                    # **plan_entropy_fields,
                     "code": None,
                     "planner_output": planner_output if save_code else None,
                     "exec_ok": None,
@@ -560,9 +581,10 @@ def run_code_then_plan(config_path: str):
 
                 if save_step_level:
                     step_logs.append(plan_step_entry)
-                print(f"  plan[{plan_attempt_count}]: 📝 {planner_output[:80].replace(chr(10), ' ')}...")
+                print(f"  plan[{plan_attempt_count}]: 📝 "
+                      f"{planner_output[:60].replace(chr(10), ' ')}...")
 
-                # 2) code generation from plan
+                # ── 2) plan_code
                 coder_prompt = build_coder_prompt_for_sample(sample, planner_output)
 
                 model.max_new_tokens = coder_max_tokens
@@ -578,6 +600,7 @@ def run_code_then_plan(config_path: str):
                 code2_input_tokens = code2_gen_result["input_tokens"]
                 code2_output_tokens = code2_gen_result["output_tokens"]
                 code2_total_tokens = code2_gen_result["total_tokens"]
+                # code2_entropy_fields = _extract_entropy_fields(code2_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += code2_input_tokens
@@ -612,6 +635,8 @@ def run_code_then_plan(config_path: str):
                         "output_tokens": code2_output_tokens,
                         "total_tokens": code2_total_tokens,
                         "latency_sec": code2_latency,
+                        # ── entropy
+                        # **code2_entropy_fields,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -712,6 +737,8 @@ def run_code_then_plan(config_path: str):
                         "output_tokens": code2_output_tokens,
                         "total_tokens": code2_total_tokens,
                         "latency_sec": code2_latency,
+                        # ── entropy
+                        # **code2_entropy_fields,
                         "code": code2_generated if save_code else None,
                         "planner_output": None,
                         "exec_ok": code2_record.exec_ok,
@@ -733,7 +760,7 @@ def run_code_then_plan(config_path: str):
                         step_logs.append(code2_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  plan_code[{plan_attempt_count}]: {pretty}")
+                    print(f"  plan_code[{plan_attempt_count}]: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
@@ -757,7 +784,6 @@ def run_code_then_plan(config_path: str):
                 final_attempt_record = _make_empty_output_record("No attempt record was produced.")
             
             setattr(final_exec_result, "num_calls", call_count)
-            # eval_results.append(final_exec_result)
             eval_results.append(SimpleNamespace(
                 status=final_attempt_record.status,
                 passed=final_attempt_record.passed,
@@ -772,6 +798,14 @@ def run_code_then_plan(config_path: str):
             
             final_status = final_attempt_record.status
             failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
+
+            # trajectory 수준 entropy 시계열 (plan_code step만 — 코드 생성 step 기준)
+            code_steps = [
+                s for s in step_logs
+                if s["trajectory_id"] == trajectory_id
+                and s["stage"] in ("generate", "plan_code")
+            ]
+            entropy_series = [s["avg_entropy"] for s in code_steps]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -793,6 +827,9 @@ def run_code_then_plan(config_path: str):
                 "num_test_fail": num_test_fail,
                 "transition_path": transition_path,
                 "used_plan": used_plan,
+                # ── entropy 시계열 요약
+                "entropy_series": entropy_series,
+                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,
@@ -800,7 +837,7 @@ def run_code_then_plan(config_path: str):
                 },
                 "recovered_by": (
                     "generate" if (not used_plan and final_status == "PASS")
-                    else "plan_code" if (used_plan and final_status == "PASS")      # plan → code → PASS
+                    else "plan_code" if (used_plan and final_status == "PASS")
                     else None
                 ),
                 "plan_recovery_attempt": (
@@ -843,11 +880,13 @@ def run_code_then_plan(config_path: str):
         )
 
         print(
-            f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} ({n_used_plan/len(trajectory_logs)*100:.1f}%)"
+            f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} "
+            f"({n_used_plan/len(trajectory_logs)*100:.1f}%)"
             if len(trajectory_logs) > 0 else "  plan 사용: 0/0"
         )
         print(
-            f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} ({n_plan_recovered/n_used_plan*100:.1f}%)"
+            f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} "
+            f"({n_plan_recovered/n_used_plan*100:.1f}%)"
             if n_used_plan > 0 else "  plan 복구 성공: 0/0"
         )
         print(f"{'=' * 60}")
@@ -882,7 +921,7 @@ def run_code_then_plan(config_path: str):
             "extra_summary": extra_summary,
             "plan_stats": {
                 "used_plan": n_used_plan,
-                "plan_recovered": n_plan_recovered,                 # PLANNER 사용해서 최종적으로 PASS까지 간 문제의 수
+                "plan_recovered": n_plan_recovered,
                 "plan_recovery_rate": n_plan_recovered / n_used_plan if n_used_plan > 0 else 0.0,
             },
         }

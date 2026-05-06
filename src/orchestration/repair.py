@@ -45,21 +45,6 @@ def _print_header(title: str, width: int = 80):
 
 
 def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_code: str | None = None):
-    """
-    sample 모드에서 사람이 눈으로 pipeline 흐름을 따라갈 수 있도록
-    단계별 input/output을 출력한다.
-
-    generated_code=None이면 STEP 1(prompt), STEP 2(raw_text)만 출력하고
-    STEP 3 이후 실행 단계는 스킵한다. (빈 출력 차단 경로에서 사용)
-
-    특히 HumanEval은 아래 흐름을 그대로 보여준다:
-    (1) input: prompt
-    (2) output y
-    (3) code = prompt + y
-    (4) exec(code) -> candidate 생성
-    (5) exec(test) -> check 생성
-    (6) check(candidate) -> assert 평가
-    """
     _print_header("SAMPLE DEBUG :: STEP 1. INPUT PROMPT")
     print(_shorten(prompt))
 
@@ -177,6 +162,20 @@ def _make_empty_output_record(message: str = "Model output was empty or containe
         error_stage="code",
         error_message=message,
     )
+
+
+def _extract_entropy_fields(gen_result: dict) -> dict:
+    """
+    hf_model.generate() 반환값에서 entropy 관련 필드를 추출한다.
+    hf_model.py가 수정되지 않은 환경에서도 안전하게 0.0으로 fallback한다.
+    """
+    return {
+        "avg_entropy":          gen_result.get("avg_entropy", 0.0),
+        "max_entropy":          gen_result.get("max_entropy", 0.0),
+        "entropy_std":          gen_result.get("entropy_std", 0.0),
+        "first_20pct_entropy":  gen_result.get("first_20pct_entropy", 0.0),
+        "last_20pct_entropy":   gen_result.get("last_20pct_entropy", 0.0),
+    }
 
 
 def run_repair_loop(config_path: str):
@@ -312,7 +311,10 @@ def run_repair_loop(config_path: str):
                 input_tokens = gen_result["input_tokens"]
                 output_tokens = gen_result["output_tokens"]
                 total_tokens = gen_result["total_tokens"]
-                
+
+                # ── entropy 추출 (2차 연구 핵심)
+                # entropy_fields = _extract_entropy_fields(gen_result)
+
                 call_count += 1
                 cumulative_input_tokens += input_tokens
                 cumulative_output_tokens += output_tokens
@@ -342,6 +344,8 @@ def run_repair_loop(config_path: str):
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,
                         "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
                         "code": None,
                         "exec_ok": False,
                         "test_pass": False,
@@ -448,6 +452,8 @@ def run_repair_loop(config_path: str):
                     "output_tokens": output_tokens,
                     "total_tokens": total_tokens,
                     "latency_sec": latency_sec,
+                    # ── entropy
+                    # **entropy_fields,
                     "code": generated_code if save_code else None,
                     "exec_ok": attempt_record.exec_ok,
                     "test_pass": attempt_record.test_pass,
@@ -468,7 +474,7 @@ def run_repair_loop(config_path: str):
                 step_logs.append(step_entry)
 
                 pretty_status = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                print(f"  attempt {attempt_idx}: {pretty_status}")
+                print(f"  attempt {attempt_idx}: {pretty_status}  ")
 
                 _collect_failure_example(
                     failure_examples,
@@ -507,6 +513,12 @@ def run_repair_loop(config_path: str):
             final_status = final_attempt_record.status
             failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
 
+            # trajectory 수준 entropy 요약: 각 step의 avg_entropy 시계열
+            entropy_series = [
+                s["avg_entropy"] for s in step_logs
+                if s["trajectory_id"] == trajectory_id
+            ]
+
             trajectory_entry = {
                 "run_id": run_id,
                 "dataset": dataset_name,
@@ -524,6 +536,9 @@ def run_repair_loop(config_path: str):
                 "num_exec_fail": num_exec_fail,
                 "num_test_fail": num_test_fail,
                 "transition_path": transition_path,
+                # ── entropy 시계열 요약 (trajectory 수준)
+                "entropy_series": entropy_series,
+                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,

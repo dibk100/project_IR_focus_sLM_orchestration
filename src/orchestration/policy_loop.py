@@ -29,40 +29,37 @@ Action = {
     plan_code : 생성된 plan을 기반으로 코드 생성 및 평가
 }
 
-Rules:
 1. Initial Rule
-   - 처음에는 항상 generate 수행
-   - 첫 plan 호출 이후에는, 이전 실패 코드와 에러 정보를 포함한 re-planning prompt를 사용함(즉, 2번째 이후 plan 호출은 항상 re-plan 형태)
-   
-2. AssertionError Rule
-   if failure_type == TEST_FAIL and error_type == AssertionError:
-       → plan
-    - 초기 generate에서 위 패턴이 발생하면, repair 대신 plan으로 전환
-    - 이후에도 동일 패턴이 반복되면 지속적으로 plan (re-plan) 수행
-    
-3. Repair Default Rule(핵심)
-   그 외의 경우:
-       → repair : 하나의 policy cycle 안에서 최대 max_repair_steps번 반복
+   At the first step, always execute generate.
+
+2. AssertionError Planning Rule
+   If failure_type == TEST_FAIL and error_type == AssertionError:
+       if plan is available:
+           execute plan
+       else:
+           stop
+
+3. Repair Default Rule
+   For all other failures:
+       execute repair up to max_repair_steps within the current policy cycle.
 
 4. Stagnation Rule
-       if (failure_type,error_type) repeated ≥ K:
-         → plan
-       else :
-         → stop
-    - 동일한 실패 패턴이 반복되면 현재 전략이 효과적이지 않다고 판단하여 새로운 해결 전략을 위해 planning 시도
-    - 단, planning budget이 없으면 더 이상 진행하지 않고 종료
+   If the same (failure_type, error_type) repeats at least K times:
+       if plan is available:
+           execute plan
+       else:
+           stop
 
-5. Budget Constraint Rule
-   if plan_budget_usage ≥ max_plan_calls:
-       → plan 불가 → 종료
-    - plan 전략은 예산이 허용하는 범위 내에서만 호출 가능하도록 함. 
-    예산이 소진된 경우, 더 이상 plan 전략을 사용할 수 없고 종료함.
+5. Plan Budget Rule
+   If the number of planning cycles reaches max_plan_calls:
+       planning is unavailable.
+       If planning is required, stop.
 
-6. Global Budget Rule
-  if total_calls + 2 > max_calls:
-      → plan 진입 불가 → 종료
-- 전체 호출 수가 max_calls를 초과하면 종료
-- plan은 2 calls (plan + plan_code)를 사용하므로, 남은 call이 2 미만이면 planning을 수행할 수 없음
+6. Global Call Budget Rule
+   If call_count >= max_calls:
+       stop.
+   If call_count + 2 > max_calls:
+       planning is unavailable, because plan requires two calls.
 """
 from __future__ import annotations
 

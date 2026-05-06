@@ -176,6 +176,20 @@ def _make_empty_output_record(message: str):
     )
 
 
+def _extract_entropy_fields(gen_result: dict) -> dict:
+    """
+    hf_model.generate() 반환값에서 entropy 관련 필드를 추출한다.
+    hf_model.py가 수정되지 않은 환경에서도 안전하게 0.0으로 fallback한다.
+    """
+    return {
+        "avg_entropy":          gen_result.get("avg_entropy", 0.0),
+        "max_entropy":          gen_result.get("max_entropy", 0.0),
+        "entropy_std":          gen_result.get("entropy_std", 0.0),
+        "first_20pct_entropy":  gen_result.get("first_20pct_entropy", 0.0),
+        "last_20pct_entropy":   gen_result.get("last_20pct_entropy", 0.0),
+    }
+
+
 def _extract_code_for_planner(adapter, sample, raw_text: str):
     if hasattr(adapter, "extract_code_for_planner"):
         return adapter.extract_code_for_planner(sample, raw_text)
@@ -238,7 +252,7 @@ def run_code_then_plan_repair(config_path: str):
     save_code = logging_cfg.get("save_code", True)
 
     debug_mode = debug_cfg.get("mode", "run")
- 
+
     os.makedirs(output_dir, exist_ok=True)
 
     log_fp = None
@@ -341,6 +355,7 @@ def run_code_then_plan_repair(config_path: str):
                 input_tokens = gen_result["input_tokens"]
                 output_tokens = gen_result["output_tokens"]
                 total_tokens = gen_result["total_tokens"]
+                # entropy_fields = _extract_entropy_fields(gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += input_tokens
@@ -374,6 +389,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,
                         "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -447,11 +464,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = generated_code
                     current_status = attempt_record.status
-                    
+
                     if attempt_record.passed:
                         last_success_stage = "generate"
                         last_success_cycle = 0
-                        
+
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -477,6 +494,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,
                         "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
                         "code": generated_code if save_code else None,
                         "planner_output": None,
                         "exec_ok": attempt_record.exec_ok,
@@ -498,7 +517,7 @@ def run_code_then_plan_repair(config_path: str):
                         step_logs.append(step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  generate: {pretty}")
+                    print(f"  generate: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
@@ -515,23 +534,24 @@ def run_code_then_plan_repair(config_path: str):
 
             # =========================================================
             # Planning + repair cycle
-            # Each cycle:
-            #   plan -> plan_code -> (if fail) repair
+            # 한 사이클: plan(1) + plan_code(1) + repair(1) = 3 calls
+            # while 진입 시 3 calls 여유가 있을 때만 새 사이클 시작
             # =========================================================
             while (
                 final_attempt_record is not None
                 and not final_attempt_record.passed
-                and call_count + 2 <= max_calls
+                and call_count + 3 <= max_calls  # [FIX] +2 -> +3: plan+plan_code+repair 보장
             ):
                 planning_cycle_count += 1
                 used_plan = True
+
+                orig_tokens = model.max_new_tokens
 
                 # ----------------------------
                 # 1) plan
                 # ----------------------------
                 planner_prompt = build_planner_prompt_for_sample(sample)
 
-                orig_tokens = model.max_new_tokens
                 model.max_new_tokens = planner_max_tokens
                 try:
                     plan_start = time.perf_counter()
@@ -545,6 +565,7 @@ def run_code_then_plan_repair(config_path: str):
                 plan_input_tokens = plan_gen_result["input_tokens"]
                 plan_output_tokens = plan_gen_result["output_tokens"]
                 plan_total_tokens = plan_gen_result["total_tokens"]
+                # plan_entropy_fields = _extract_entropy_fields(plan_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += plan_input_tokens
@@ -573,6 +594,8 @@ def run_code_then_plan_repair(config_path: str):
                     "output_tokens": plan_output_tokens,
                     "total_tokens": plan_total_tokens,
                     "latency_sec": plan_latency,
+                    # ── entropy
+                    # **plan_entropy_fields,
                     "code": None,
                     "planner_output": latest_plan if save_code else None,
                     "exec_ok": None,
@@ -589,10 +612,11 @@ def run_code_then_plan_repair(config_path: str):
                 }
                 if hasattr(sample, "entry_point"):
                     plan_step_entry["entry_point"] = sample.entry_point
-    
+
                 if save_step_level:
                     step_logs.append(plan_step_entry)
-                print(f"  plan[{planning_cycle_count}]: 📝 {latest_plan[:80].replace(chr(10), ' ')}...")
+                print(f"  plan[{planning_cycle_count}]: 📝 "
+                      f"{latest_plan[:60].replace(chr(10), ' ')}...")
 
                 # ----------------------------
                 # 2) plan_code
@@ -612,6 +636,7 @@ def run_code_then_plan_repair(config_path: str):
                 code_input_tokens = code_gen_result["input_tokens"]
                 code_output_tokens = code_gen_result["output_tokens"]
                 code_total_tokens = code_gen_result["total_tokens"]
+                # code_entropy_fields = _extract_entropy_fields(code_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += code_input_tokens
@@ -646,6 +671,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": code_output_tokens,
                         "total_tokens": code_total_tokens,
                         "latency_sec": code_latency,
+                        # ── entropy
+                        # **code_entropy_fields,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -719,11 +746,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = code_generated
                     current_status = code_record.status
-                    
+
                     if code_record.passed:
                         last_success_stage = "plan_code"
                         last_success_cycle = planning_cycle_count
-                    
+
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -749,6 +776,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": code_output_tokens,
                         "total_tokens": code_total_tokens,
                         "latency_sec": code_latency,
+                        # ── entropy
+                        # **code_entropy_fields,
                         "code": code_generated if save_code else None,
                         "planner_output": None,
                         "exec_ok": code_record.exec_ok,
@@ -770,7 +799,7 @@ def run_code_then_plan_repair(config_path: str):
                         step_logs.append(code_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  plan_code[{planning_cycle_count}]: {pretty}")
+                    print(f"  plan_code[{planning_cycle_count}]: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
@@ -785,16 +814,17 @@ def run_code_then_plan_repair(config_path: str):
                         error_message=code_record.error_message,
                     )
 
+                # plan_code 성공 시 사이클 종료
                 if final_attempt_record.passed:
-                    break
-
-                # repair budget check
-                if call_count >= max_calls:
                     break
 
                 # ----------------------------
                 # 3) repair
+                # [FIX] call_count + 1 > max_calls: repair 1 call 여유 확인
                 # ----------------------------
+                if call_count + 1 > max_calls:
+                    break
+
                 used_repair = True
 
                 repair_prompt = build_repair_prompt_for_sample(
@@ -818,6 +848,7 @@ def run_code_then_plan_repair(config_path: str):
                 repair_input_tokens = repair_gen_result["input_tokens"]
                 repair_output_tokens = repair_gen_result["output_tokens"]
                 repair_total_tokens = repair_gen_result["total_tokens"]
+                # repair_entropy_fields = _extract_entropy_fields(repair_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += repair_input_tokens
@@ -852,6 +883,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": repair_output_tokens,
                         "total_tokens": repair_total_tokens,
                         "latency_sec": repair_latency,
+                        # ── entropy
+                        # **repair_entropy_fields,
                         "code": None,
                         "planner_output": None,
                         "exec_ok": False,
@@ -925,11 +958,11 @@ def run_code_then_plan_repair(config_path: str):
                     final_exec_result = exec_result
                     latest_code = repaired_code
                     current_status = repair_record.status
-                    
+
                     if repair_record.passed:
                         last_success_stage = "repair"
                         last_success_cycle = planning_cycle_count
-                    
+
                     transition_path.append(current_status)
 
                     if str(current_status).startswith("EXEC_FAIL"):
@@ -955,6 +988,8 @@ def run_code_then_plan_repair(config_path: str):
                         "output_tokens": repair_output_tokens,
                         "total_tokens": repair_total_tokens,
                         "latency_sec": repair_latency,
+                        # ── entropy
+                        # **repair_entropy_fields,
                         "code": repaired_code if save_code else None,
                         "planner_output": latest_plan if save_code else None,
                         "exec_ok": repair_record.exec_ok,
@@ -976,7 +1011,7 @@ def run_code_then_plan_repair(config_path: str):
                         step_logs.append(repair_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  repair[{planning_cycle_count}]: {pretty}")
+                    print(f"  repair[{planning_cycle_count}]: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
@@ -991,6 +1026,7 @@ def run_code_then_plan_repair(config_path: str):
                         error_message=repair_record.error_message,
                     )
 
+                # repair 성공 시 사이클 종료
                 if final_attempt_record.passed:
                     break
 
@@ -1000,10 +1036,30 @@ def run_code_then_plan_repair(config_path: str):
                 final_attempt_record = _make_empty_output_record("No attempt record was produced.")
 
             setattr(final_exec_result, "num_calls", call_count)
-            eval_results.append(final_exec_result)
+
+            # [FIX] code_then_plan.py와 동일하게 SimpleNamespace로 명시적 필드를 담아 append
+            eval_results.append(SimpleNamespace(
+                status=final_attempt_record.status,
+                passed=final_attempt_record.passed,
+                exec_ok=final_attempt_record.exec_ok,
+                test_pass=final_attempt_record.test_pass,
+                tests_passed=final_attempt_record.tests_passed,
+                tests_total=final_attempt_record.tests_total,
+                error_type=getattr(final_attempt_record, "error_type", None),
+                error_stage=getattr(final_attempt_record, "error_stage", None),
+                num_calls=call_count,
+            ))
 
             final_status = final_attempt_record.status
             failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
+
+            # trajectory 수준 entropy 시계열 (코드 생성 step 기준)
+            code_steps = [
+                s for s in step_logs
+                if s["trajectory_id"] == trajectory_id
+                and s["stage"] in ("generate", "plan_code", "repair")
+            ]
+            entropy_series = [s["avg_entropy"] for s in code_steps]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -1026,6 +1082,9 @@ def run_code_then_plan_repair(config_path: str):
                 "transition_path": transition_path,
                 "used_plan": used_plan,
                 "used_repair": used_repair,
+                # ── entropy 시계열 요약
+                "entropy_series": entropy_series,
+                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,
@@ -1047,8 +1106,10 @@ def run_code_then_plan_repair(config_path: str):
 
             trajectory_logs.append(trajectory_entry)
 
+            # [FIX] del final_exec_result 추가 (code_then_plan.py와 동일하게 메모리 해제)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            del final_exec_result
             gc.collect()
 
         summary = summarize_phase1_results(eval_results, k=max_calls)
@@ -1080,7 +1141,7 @@ def run_code_then_plan_repair(config_path: str):
             1 for t in trajectory_logs
             if t.get("recovered_by") == "repair"
         )
-        
+
         print(
             f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} ({n_used_plan/len(trajectory_logs)*100:.1f}%)"
             if len(trajectory_logs) > 0 else "  plan 사용: 0/0"
@@ -1098,9 +1159,9 @@ def run_code_then_plan_repair(config_path: str):
             if n_used_repair > 0 else "  repair 복구 성공: 0/0"
         )
         print(f"{'=' * 60}")
-        
+
         # -----------------------------
-        # call-level stats (NEW)
+        # call-level stats
         # -----------------------------
         n_planning_cycles = sum(
             1 for s in step_logs
@@ -1116,7 +1177,7 @@ def run_code_then_plan_repair(config_path: str):
             n_planning_code_successes / n_planning_cycles
             if n_planning_cycles > 0 else 0.0
         )
-        
+
         n_repair_calls = sum(
             1 for s in step_logs
             if s.get("stage") == "repair"
@@ -1141,23 +1202,22 @@ def run_code_then_plan_repair(config_path: str):
             if n_planning_cycles > 0
             else "  [planning-cycle] 사용: 0 cycles (0 calls), 성공: 0/0"
         )
-        
-        print(
-        f"  [repair-call] 사용: {n_repair_calls} calls, "
-        f"성공: {n_repair_call_successes}/{n_repair_calls} "
-        f"({repair_call_success_rate*100:.1f}%)"
-        if n_repair_calls > 0
-        else "  [repair-call] 사용: 0 calls, 성공: 0/0"
-        )
-        
-        # repair가 plan 이후에만 쓰이므로
-        # "plan 이후 repair 성공률"
 
+        print(
+            f"  [repair-call] 사용: {n_repair_calls} calls, "
+            f"성공: {n_repair_call_successes}/{n_repair_calls} "
+            f"({repair_call_success_rate*100:.1f}%)"
+            if n_repair_calls > 0
+            else "  [repair-call] 사용: 0 calls, 성공: 0/0"
+        )
+
+        # [FIX] trajectory_id 동일성 체크 추가로 cross-problem 오판 방지
         plan_then_repair_calls = [
             s for i, s in enumerate(step_logs)
             if s.get("stage") == "repair"
             and i > 0
-            and step_logs[i-1].get("stage") == "plan_code"
+            and step_logs[i - 1].get("stage") == "plan_code"
+            and step_logs[i - 1].get("trajectory_id") == s.get("trajectory_id")
         ]
 
         plan_then_repair_success = sum(
@@ -1205,22 +1265,20 @@ def run_code_then_plan_repair(config_path: str):
                 "repair_recovery_rate": n_repair_recovered / n_used_repair if n_used_repair > 0 else 0.0,
             },
             "call_level": {
-            "planning_cycle_count": n_planning_cycles,
-            "planning_cycle_call_cost": planning_cycle_call_cost,
-            "planning_code_success_count": n_planning_code_successes,
-            "planning_cycle_success_rate": planning_cycle_success_rate,
-
-            "repair_call_count": n_repair_calls,
-            "repair_success_count": n_repair_call_successes,
-            "repair_success_rate": repair_call_success_rate,
-
-            "plan_then_repair_call_count": len(plan_then_repair_calls),
-            "plan_then_repair_success_count": plan_then_repair_success,
-            "plan_then_repair_success_rate": (
-                plan_then_repair_success / len(plan_then_repair_calls)
-                if len(plan_then_repair_calls) > 0 else 0.0
-            ),
-        }
+                "planning_cycle_count": n_planning_cycles,
+                "planning_cycle_call_cost": planning_cycle_call_cost,
+                "planning_code_success_count": n_planning_code_successes,
+                "planning_cycle_success_rate": planning_cycle_success_rate,
+                "repair_call_count": n_repair_calls,
+                "repair_success_count": n_repair_call_successes,
+                "repair_success_rate": repair_call_success_rate,
+                "plan_then_repair_call_count": len(plan_then_repair_calls),
+                "plan_then_repair_success_count": plan_then_repair_success,
+                "plan_then_repair_success_rate": (
+                    plan_then_repair_success / len(plan_then_repair_calls)
+                    if len(plan_then_repair_calls) > 0 else 0.0
+                ),
+            },
         }
 
         transition_counts = {}

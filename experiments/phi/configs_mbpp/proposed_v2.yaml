@@ -1,0 +1,53 @@
+# 사용법:
+#   PYTHONPATH=. python -m src.orchestration.policy_loop_v2 experiments/phi/configs_mbpp/proposed_v2.yaml
+
+run:
+  run_id: "phase2_phi35mini_mbpp_proposed_v2"
+  seed: 42
+
+dataset:
+  name: "mbpp"
+  num_samples: 374
+
+model:
+  name: "microsoft/Phi-3.5-mini-instruct"
+  max_new_tokens: 512
+  temperature: 0.2
+  
+  planner:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:    
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "policy_loop"
+
+budget:
+  max_calls: 20
+
+policy:
+  max_plan_calls: 8
+  max_repair_steps: 4
+  stagnation_threshold: 2
+
+output:
+  dir: "results/phi35mini/mbpp/proposed_v2"
+
+logging:
+  save_step_level: true              # 각 step별 행동 기록
+  save_trajectory_level: true        # 전체 시도 과정
+  save_problem_summary: true     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
+  save_run_analysis: false
+  save_code: false          # 생성 코드 저장 여부
+  failure_examples: false   # 실패 예제 저장 여부
+
+debug:
+  mode: "run"

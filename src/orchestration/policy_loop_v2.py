@@ -29,51 +29,38 @@ Action = {
     plan_code : 생성된 plan을 기반으로 코드 생성 및 평가
 }
 
-Rules:
 1. Initial Rule
-   - 처음에는 항상 generate를 수행한다.
-   - 첫 번째 plan은 문제 입력만을 기반으로 생성한다.
-   - 두 번째 이후의 plan은 re-plan으로 간주하며,
-     이전 plan, 실패 코드, 실패 상태, error_type, error_message를 함께 사용한다.
+   Always start with generate.
 
-2. Planning Priority Rule
-   다음 경우에는 repair 대신 plan/re-plan을 수행한다.
-   - failure_type == TEST_FAIL
-   - failure_type == CODE_FAIL
-   - 동일한 (failure_type, error_type)이 stagnation_threshold 이상 반복된 경우
-   - repair 이후에도 PASS가 되지 않은 경우
+2. Semantic Failure Rule
+   If TEST_FAIL with AssertionError:
+       choose plan/replan.
 
-   특히 TEST_FAIL:AssertionError는 semantic failure로 간주하여
-   repair 대상에서 제외하고 plan/re-plan으로 전환한다.
+3. Stagnation Rule
+   If the same (failure_type, error_type) repeats at least K times:
+       choose plan/replan.
 
-3. Restricted Repair Rule
-   다음 execution-level 오류에 한해서만 repair를 허용한다.
+4. Code Failure Rule
+   If CODE_FAIL:
+       choose plan/replan.
 
-   if failure_type == EXEC_FAIL and error_type in {
-       SyntaxError, NameError, TypeError, ImportError,
-       IndentationError, UnboundLocalError
-   }:
-       → repair
-   else:
-       → plan/re-plan
+5. Selective Repair Rule
+   If EXEC_FAIL and error_type is locally repairable
+   and repair budget remains:
+       choose repair.
+   Repairable errors include SyntaxError, NameError, TypeError,
+   ImportError, IndentationError, and UnboundLocalError.
 
-   - repair는 문제 단위로 최대 max_repair_steps번만 허용한다.
-   - repair budget이 소진되면 더 이상 repair하지 않고 plan/re-plan으로 전환한다.
+6. Plan-Preferred Default Rule
+   For all other failures:
+       choose plan/replan.
 
-4. Planning Budget Rule
-   if plan_budget_usage ≥ max_plan_calls:
-       → plan/re-plan 불가 → 종료
-
-   - plan과 re-plan은 동일한 planning budget을 공유한다.
-
-5. Global Budget Rule
-   if total_calls ≥ max_calls:
-       → 종료
-
-   if total_calls + 2 > max_calls:
-       → plan/re-plan 진입 불가 → 종료
-
-   - plan/re-plan은 plan + plan_code로 구성되어 2 calls를 사용한다.
+7. Budget Rule
+   If the selected plan/replan action is infeasible due to
+   max_plan_calls or max_calls:
+       stop.
+   If repair budget is exhausted and planning is infeasible:
+       stop.
 """
 import gc
 import os

@@ -13,6 +13,9 @@ def load_task_and_adapter(dataset_name: str):
     """
     if dataset_name == "humaneval":
         return HumanEvalTask(), HumanEvalAdapter()
+    
+    if dataset_name == "humaneval_pro":
+        return HumanEvalTask(), HumanEvalAdapter()
 
     if dataset_name == "mbpp":
         return MBPPTask(), MBPPAdapter()
