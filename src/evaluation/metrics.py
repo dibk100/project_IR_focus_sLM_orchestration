@@ -165,6 +165,22 @@ def pass_at_1(results: List[ResultType]) -> float:
     passed_count = sum(1 for r in results if is_passed(r))
     return passed_count / len(results)
 
+def is_success_within_k(result: ResultType, k: int) -> bool:
+    if not is_passed(result):
+        return False
+
+    num_calls = _get_attr(result, "num_calls", None)
+    if num_calls is None:
+        return True  # call count가 없으면 이미 k-budget 실험 결과라고 가정
+
+    return num_calls <= k
+
+
+def success_at_k(results: List[ResultType], k: int = 20) -> float:
+    if not results:
+        return 0.0
+    success_count = sum(1 for r in results if is_success_within_k(r, k))
+    return success_count / len(results)
 
 def execution_success_rate(results: List[ResultType]) -> float:
     """
@@ -211,57 +227,46 @@ def conditional_pass(results: List[ResultType]) -> float:
     return passed_count / exec_success_count
 
 
-def gain_vs_single(current_pass_at_1: float, single_pass_at_1: float) -> float:
-    """
-    single-shot baseline 대비 성능 향상량 계산.
+# def gain_vs_single(current_pass_at_1: float, single_pass_at_1: float) -> float:
+#     """
+#     single-shot baseline 대비 성능 향상량 계산.
 
-    의미:
-    - 현재 방법의 pass@1이 baseline보다 얼마나 나아졌는지 측정
+#     의미:
+#     - 현재 방법의 pass@1이 baseline보다 얼마나 나아졌는지 측정
 
-    예:
-    - current = 0.31
-    - single  = 0.24
-    -> gain_vs_single = 0.07
-    """
-    return current_pass_at_1 - single_pass_at_1
+#     예:
+#     - current = 0.31
+#     - single  = 0.24
+#     -> gain_vs_single = 0.07
+#     """
+#     return current_pass_at_1 - single_pass_at_1
 
+def gain_vs_single(success_at_k_value: float, single_pass_at_1: float) -> float:
+    return success_at_k_value - single_pass_at_1
 
 def summarize_phase1_results(
     results: List[ResultType],
     single_baseline_pass_at_1: Optional[float] = None,
+    k: int = 20,
 ) -> dict:
-    """
-    Phase 1 핵심 성능 지표를 한 번에 요약한다.
-
-    포함 항목:
-    - total                    : 총 문제 수
-    - passed                   : 최종 PASS 개수
-    - exec_success             : execution success 개수
-    - pass@1                   : overall 성능
-    - execution_success_rate   : structural quality
-    - conditional_pass         : semantic quality
-    - gain_vs_single           : baseline 대비 성능 향상량 (옵션)
-
-    역할:
-    - 실험 전체 결과를 한 번에 summary dict로 묶어서
-      logging / json 저장 / console 출력에 쓰기 좋게 만든다.
-    """
     total = len(results)
-    passed_count = sum(1 for r in results if is_passed(r))
+    success_count = sum(1 for r in results if is_success_within_k(r, k))
     exec_success_count = sum(1 for r in results if is_exec_success(r))
+
+    success_key = f"success@{k}"
 
     summary = {
         "total": total,
-        "passed": passed_count,
+        "success": success_count,
         "exec_success": exec_success_count,
-        "pass@1": pass_at_1(results),
+        success_key: success_at_k(results, k=k),
         "execution_success_rate": execution_success_rate(results),
-        "conditional_pass": conditional_pass(results),
+        "conditional_success": conditional_pass(results),
     }
 
     if single_baseline_pass_at_1 is not None:
-        summary["gain_vs_single"] = gain_vs_single(
-            summary["pass@1"],
+        summary["gain_vs_single_pass@1"] = gain_vs_single(
+            summary[success_key],
             single_baseline_pass_at_1,
         )
 

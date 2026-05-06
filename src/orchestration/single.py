@@ -4,9 +4,6 @@ import os
 import sys
 import time
 import yaml
-import io
-import contextlib
-
 import torch
 
 from src.models.hf_model import HFModel
@@ -242,7 +239,7 @@ def run_single_shot(config_path: str):
             input_tokens = gen_result["input_tokens"]
             output_tokens = gen_result["output_tokens"]
             total_tokens = gen_result["total_tokens"]
-
+            
             # 4-3. 코드 추출
             generated_code = adapter.extract_code(sample, raw_text)
 
@@ -366,18 +363,20 @@ def run_single_shot(config_path: str):
             del gen_result, step_entry, trajectory_entry
             del attempt_record, exec_result
             gc.collect()
-
+        
         # 5. 결과 요약
-        summary = summarize_phase1_results(eval_results)
+        summary = summarize_phase1_results(eval_results, k=max_calls)
+
+        success_key = f"success@{max_calls}"
 
         print(f"\n{'=' * 60}")
         print("📊 결과 요약")
         print(f"  총 문제: {summary['total']}")
-        print(f"  통과: {summary['passed']}")
+        print(f"  성공: {summary['success']}")
         print(f"  실행 성공: {summary['exec_success']}")
-        print(f"  pass@1: {summary['pass@1']:.4f}")
+        print(f"  {success_key}: {summary[success_key]:.4f}")
         print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
-        print(f"  conditional_pass: {summary['conditional_pass']:.4f}")
+        print(f"  conditional_success: {summary['conditional_success']:.4f}")
         print(f"{'=' * 60}")
 
         extra_summary = {}
@@ -401,15 +400,19 @@ def run_single_shot(config_path: str):
             if trajectory_logs else 0.0
         )
 
+        success_key = f"success@{max_calls}"
+
         problem_summary = {
             "run_id": run_id,
             "dataset": dataset_name,
             "method": method_name,
+            "max_calls": max_calls,
             "total_problems": summary["total"],
-            "num_pass": summary["passed"],
-            "pass_at_1": summary["pass@1"],
+            "num_success": summary["success"],
+            "success_metric_name": success_key,
+            "success_at_k": summary[success_key],
             "execution_success_rate": summary["execution_success_rate"],
-            "conditional_pass": summary["conditional_pass"],
+            "conditional_success": summary["conditional_success"],
             "avg_tokens": avg_tokens,
             "avg_latency": avg_latency,
             "avg_calls": avg_calls,

@@ -7,10 +7,8 @@ __pycache__/
 *.so
 
 # customization
-datasets/
-results/
-log/
-
+*datasets
+*results
 
 # Distribution / packaging
 .Python

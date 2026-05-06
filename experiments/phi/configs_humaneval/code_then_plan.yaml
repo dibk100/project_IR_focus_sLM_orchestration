@@ -1,0 +1,41 @@
+# 사용법:
+# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phi/configs_humaneval/code_then_plan.yaml
+
+run:
+  run_id: "phase2_phi35mini_humaneval_code_then_plan"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "microsoft/Phi-3.5-mini-instruct"
+  temperature: 0.2
+  planner:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "microsoft/Phi-3.5-mini-instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "code_then_plan"
+
+budget:
+  max_calls: 20
+
+output:
+  dir: "results/phi35mini/humaneval/code_then_plan"
+
+logging:
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: false
+  save_code: false
+
+debug:
+  mode: "run"

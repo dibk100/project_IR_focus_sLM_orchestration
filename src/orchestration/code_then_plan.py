@@ -1,44 +1,35 @@
 """
-Code-Then-Plan Orchestration
+Code-Then-Plan
 
-흐름: Problem → G(Generate) → V(Evaluate) → [실패 시] → D(Plan) → G(Generate) → V(Evaluate)
+흐름:
+Problem → G(Generate) → V(Evaluate)
+         → [실패 시] Plan → Code → V
+         → [계속 실패 시] Plan → Code → V
+         → ... (budget 내 반복)
 
-1. 초기 직접 코드 생성 (single_shot과 동일)           [stage="generate"]
-2. 실행/평가 (Verification)
-3. 성공하면 종료 (1 call)
-4. 실패 시:
-   a. Planner가 구현 계획 생성                        [stage="plan"]
-   b. Coder가 계획 기반 코드 재생성                    [stage="plan_code"]
-   c. 실행/평가
-5. 결과 저장 (최대 3 calls)
+- 첫 시도는 generate 1회
+- 실패하면 generic planner를 호출하고, 해당 plan으로 coder가 재생성
+- 이후에도 실패하면 같은 generic planner -> plan_code cycle을 반복
+- replanner / repair는 사용하지 않음
+- max_calls는 전체 글로벌 budget으로 적용
 
-planner_coder와의 차이:
-- planner_coder: 항상 plan → code (2 calls)
-- code_then_plan: code 먼저, 실패 시에만 plan → code (1 or 3 calls)
-
-장점:
-- 첫 시도가 single_shot과 동일하므로 plan의 순수 복구 효과 측정 가능
-- 성공 시 1 call만 소비하여 토큰 효율적
-
-핵심:
-- 동일 모델을 planner/coder 양쪽에 사용 (config에서 분리 가능)
-- Planner: max_new_tokens=256 (간결한 plan)
-- Coder (plan 기반): max_new_tokens=512
-- step_logs / trajectory_logs / summary / analysis / failure_examples 저장
+call 단위:
+- generate = 1 call
+- plan = 1 call
+- plan_code = 1 call
 """
+from __future__ import annotations
+
 import gc
-import io
 import os
 import sys
 import time
-import yaml
-import contextlib
 from types import SimpleNamespace
 
+import yaml
 import torch
 
 from src.models.hf_model import HFModel
-
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
 from src.utils.io import save_result, save_results_jsonl, make_run_id
 from src.utils.dataloader import load_task_and_adapter
@@ -47,7 +38,7 @@ from src.utils.prompting.planner_coder import extract_planner_output
 
 
 # ─────────────────────────────────────────────
-# Debug helpers (single/retry/repair/planner_coder 공통)
+# Debug helpers
 # ─────────────────────────────────────────────
 
 def _shorten(text, max_len: int = 500) -> str:
@@ -64,10 +55,6 @@ def _print_header(title: str, width: int = 60):
 
 
 def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_code: str | None = None):
-    """
-    sample 모드에서 pipeline 흐름을 단계별로 출력한다.
-    generated_code=None이면 STEP 1, 2만 출력하고 실행 단계는 스킵.
-    """
     _print_header("SAMPLE DEBUG :: STEP 1. INPUT PROMPT")
     print(_shorten(prompt))
 
@@ -80,7 +67,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
         return
     print(_shorten(generated_code))
 
-    # HumanEval 전용 흐름 상세 출력
     if hasattr(sample, "test") and hasattr(sample, "entry_point"):
         namespace = {}
 
@@ -127,7 +113,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print("FAILED")
             print(repr(e))
 
-    # MBPP
     elif hasattr(sample, "test_list"):
         _print_header("SAMPLE DEBUG :: MBPP TEST LIST")
         for idx, test_case in enumerate(sample.test_list):
@@ -135,7 +120,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print(_shorten(test_case))
             print("-" * 40)
 
-    # BigCode
     elif hasattr(sample, "test"):
         _print_header("SAMPLE DEBUG :: TEST CODE")
         print(_shorten(sample.test))
@@ -154,10 +138,6 @@ def _collect_failure_example(
     error_stage: str | None,
     error_message: str | None,
 ):
-    """
-    실패 유형(status)별 대표 예시 1건만 수집한다.
-    이미 동일 status의 예시가 있으면 스킵한다.
-    """
     if status == "PASS" or status in failure_examples:
         return
 
@@ -174,13 +154,45 @@ def _collect_failure_example(
     }
 
 
+def _make_empty_output_record(message: str):
+    return SimpleNamespace(
+        status="CODE_FAIL:empty_output",
+        tests_passed=0,
+        tests_total=None,
+        passed=False,
+        exec_ok=False,
+        test_pass=False,
+        error_type="empty_output",
+        error_stage="code",
+        error_message=message,
+    )
+
+
+def _extract_entropy_fields(gen_result: dict) -> dict:
+    """
+    hf_model.generate() 반환값에서 entropy 관련 필드를 추출한다.
+    hf_model.py가 수정되지 않은 환경에서도 안전하게 0.0으로 fallback한다.
+    """
+    return {
+        "avg_entropy":          gen_result.get("avg_entropy", 0.0),
+        "max_entropy":          gen_result.get("max_entropy", 0.0),
+        "entropy_std":          gen_result.get("entropy_std", 0.0),
+        "first_20pct_entropy":  gen_result.get("first_20pct_entropy", 0.0),
+        "last_20pct_entropy":   gen_result.get("last_20pct_entropy", 0.0),
+    }
+
+
+def _extract_code_for_planner(adapter, sample, raw_text: str):
+    if hasattr(adapter, "extract_code_for_planner"):
+        return adapter.extract_code_for_planner(sample, raw_text)
+    return adapter.extract_code(sample, raw_text)
+
+
 # ─────────────────────────────────────────────
 # Main runner
 # ─────────────────────────────────────────────
 
 def run_code_then_plan(config_path: str):
-    """Code-Then-Plan 실험 실행"""
-    # ── 1. Config 로드 ──
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -199,7 +211,6 @@ def run_code_then_plan(config_path: str):
     dataset_name = dataset_cfg.get("name", "humaneval")
     num_samples = dataset_cfg.get("num_samples", 1)
 
-    # 모델 설정 (initial / planner / coder)
     model_name = model_cfg.get("name", "")
     max_new_tokens = model_cfg.get("max_new_tokens", 512)
     temperature = model_cfg.get("temperature", 0.0)
@@ -211,6 +222,7 @@ def run_code_then_plan(config_path: str):
     coder_max_tokens = coder_cfg_inner.get("max_new_tokens", max_new_tokens)
 
     method_name = method_cfg.get("name", "code_then_plan")
+    max_calls = budget_cfg.get("max_calls", 3)
 
     output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/code_then_plan")
 
@@ -220,12 +232,10 @@ def run_code_then_plan(config_path: str):
     save_run_analysis = logging_cfg.get("save_run_analysis", True)
     save_code = logging_cfg.get("save_code", True)
 
-    # debug 설정
-    debug_mode = debug_cfg.get("mode", "run")  # "run" | "sample"
-
+    debug_mode = debug_cfg.get("mode", "run")
+    
     os.makedirs(output_dir, exist_ok=True)
 
-    # sample 모드 stdout 리디렉션
     log_fp = None
     stdout_backup = sys.stdout
     debug_log_path = os.path.join(output_dir, "sample_debug_output.txt")
@@ -245,12 +255,12 @@ def run_code_then_plan(config_path: str):
         print(f"max_new_tokens      : {max_new_tokens}")
         print(f"planner_max_tokens  : {planner_max_tokens}")
         print(f"coder_max_tokens    : {coder_max_tokens}")
+        print(f"max_calls           : {max_calls}")
         print(f"seed                : {seed}")
         print(f"debug_mode          : {debug_mode}")
         print(f"output_dir          : {output_dir}")
         print("=" * 60)
 
-        # config snapshot 저장
         save_result(
             {
                 "run": {"run_id": run_id, "seed": seed},
@@ -266,11 +276,9 @@ def run_code_then_plan(config_path: str):
             os.path.join(output_dir, "config.json"),
         )
 
-        # ── 2. Task / Adapter ──
         task, adapter = load_task_and_adapter(dataset_name)
         print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
 
-        # ── 3. 모델 로드 (단일 모델, max_new_tokens만 stage별로 조정) ──
         print(f"🔄 모델 로딩: {model_name}")
         model = HFModel(
             model_name=model_name,
@@ -279,7 +287,6 @@ def run_code_then_plan(config_path: str):
         )
         print("✅ 모델 로딩 완료")
 
-        # ── 4. 실험 루프 ──
         step_logs = []
         trajectory_logs = []
         eval_results = []
@@ -302,201 +309,212 @@ def run_code_then_plan(config_path: str):
             num_exec_fail = 0
             num_test_fail = 0
             call_count = 0
-            exec_result = None
+
+            final_exec_result = None
             final_attempt_record = None
+            used_plan = False
+            latest_code = None
+            plan_attempt_count = 0
 
-            # ═══════════════════════════════════════════
-            # Stage 1: 직접 코드 생성 (single_shot 동일)
-            # ═══════════════════════════════════════════
-            initial_prompt = adapter.build_initial_prompt(sample)
+            # =========================================================
+            # Stage 1: Direct generation
+            # =========================================================
+            if call_count < max_calls:
+                initial_prompt = adapter.build_initial_prompt(sample)
 
-            gen_start = time.perf_counter()
-            gen_result = model.generate(initial_prompt)
-            gen_end = time.perf_counter()
-            latency_sec = gen_end - gen_start
+                gen_start = time.perf_counter()
+                gen_result = model.generate(initial_prompt)
+                gen_end = time.perf_counter()
+                latency_sec = gen_end - gen_start
 
-            raw_text = gen_result["text"]
-            input_tokens = gen_result["input_tokens"]
-            output_tokens = gen_result["output_tokens"]
-            total_tokens = gen_result["total_tokens"]
+                raw_text = gen_result["text"]
+                input_tokens = gen_result["input_tokens"]
+                output_tokens = gen_result["output_tokens"]
+                total_tokens = gen_result["total_tokens"]
+                #entropy_fields = _extract_entropy_fields(gen_result)
 
-            call_count += 1
-            cumulative_input_tokens += input_tokens
-            cumulative_output_tokens += output_tokens
-            cumulative_total_tokens += total_tokens
-            cumulative_latency += latency_sec
+                call_count += 1
+                cumulative_input_tokens += input_tokens
+                cumulative_output_tokens += output_tokens
+                cumulative_total_tokens += total_tokens
+                cumulative_latency += latency_sec
 
-            # sample 모드 디버그 출력
-            if debug_mode == "sample":
-                _print_sample_execution_flow(
-                    sample=sample,
-                    prompt=initial_prompt,
-                    raw_text=raw_text,
-                )
+                if output_tokens == 0 or not raw_text.strip():
+                    final_attempt_record = _make_empty_output_record(
+                        "Model output was empty or contained no extractable code."
+                    )
+                    final_exec_result = final_attempt_record
+                    current_status = final_attempt_record.status
+                    transition_path.append(current_status)
 
-            # Stage 1 empty_output 차단
-            if output_tokens == 0 or not raw_text.strip():
-                current_status = "CODE_FAIL:empty_output"
-                transition_path.append(current_status)
+                    step_entry = {
+                        "run_id": run_id,
+                        "dataset": dataset_name,
+                        "problem_id": problem_id,
+                        "method": method_name,
+                        "trajectory_id": trajectory_id,
+                        "step_id": 0,
+                        "call_index": 0,
+                        "candidate_id": 0,
+                        "stage": "generate",
+                        "is_retry": False,
+                        "is_repair": False,
+                        "is_planner": False,
+                        "policy_action": "generate",
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                        "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
+                        "code": None,
+                        "planner_output": None,
+                        "exec_ok": False,
+                        "test_pass": False,
+                        "status": current_status,
+                        "error_type": final_attempt_record.error_type,
+                        "error_stage": final_attempt_record.error_stage,
+                        "error_message": final_attempt_record.error_message,
+                        "tests_passed": final_attempt_record.tests_passed,
+                        "tests_total": final_attempt_record.tests_total,
+                        "code_length": 0,
+                        "selected": None,
+                        "selection_rank": None,
+                    }
+                    if hasattr(sample, "entry_point"):
+                        step_entry["entry_point"] = sample.entry_point
 
-                step_entry = {
-                    "run_id": run_id,
-                    "dataset": dataset_name,
-                    "problem_id": problem_id,
-                    "method": method_name,
-                    "trajectory_id": trajectory_id,
-                    "step_id": 0,
-                    "call_index": 0,
-                    "candidate_id": 0,
-                    "stage": "generate",
-                    "is_retry": False,
-                    "is_repair": False,
-                    "is_planner": False,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "total_tokens": total_tokens,
-                    "latency_sec": latency_sec,
-                    "code": None,
-                    "exec_ok": False,
-                    "test_pass": False,
-                    "status": current_status,
-                    "error_type": "empty_output",
-                    "error_stage": "code",
-                    "error_message": "Model output was empty or contained no extractable code.",
-                    "tests_passed": 0,
-                    "tests_total": None,
-                    "code_length": 0,
-                    "selected": None,
-                    "selection_rank": None,
-                }
-                if hasattr(sample, "entry_point"):
-                    step_entry["entry_point"] = sample.entry_point
+                    if save_step_level:
+                        step_logs.append(step_entry)
+                    print(f"  generate: ❌ {current_status}")
 
-                step_logs.append(step_entry)
+                    _collect_failure_example(
+                        failure_examples,
+                        problem_id=problem_id,
+                        attempt_idx=0,
+                        status=current_status,
+                        prompt=initial_prompt,
+                        raw_text=raw_text,
+                        generated_code=None,
+                        error_type=final_attempt_record.error_type,
+                        error_stage=final_attempt_record.error_stage,
+                        error_message=final_attempt_record.error_message,
+                    )
 
-                final_attempt_record = SimpleNamespace(
-                    status=current_status,
-                    tests_passed=0,
-                    tests_total=None,
-                    passed=False,
-                    error_message="empty_output",
-                )
-                stage1_passed = False
-                stage1_code = None
-                stage1_error_message = "empty_output: no code was generated."
+                else:
+                    generated_code = adapter.extract_code(sample, raw_text)
 
-                print(f"  generate: ❌ {current_status}")
+                    if debug_mode == "sample":
+                        _print_sample_execution_flow(
+                            sample=sample,
+                            prompt=initial_prompt,
+                            raw_text=raw_text,
+                            generated_code=generated_code,
+                        )
 
-                _collect_failure_example(
-                    failure_examples,
-                    problem_id=problem_id,
-                    attempt_idx=0,
-                    status=current_status,
-                    prompt=initial_prompt,
-                    raw_text=raw_text,
-                    generated_code=None,
-                    error_type="empty_output",
-                    error_stage="code",
-                    error_message="empty_output",
-                )
+                    exec_result = adapter.execute(sample, generated_code)
 
-            else:
-                # Stage 1 정상 경로
-                generated_code = adapter.extract_code(sample, raw_text)
-                exec_result = adapter.execute(sample, generated_code)
+                    if debug_mode == "sample":
+                        _print_header("SAMPLE DEBUG :: EXEC RESULT OBJECT")
+                        print(exec_result)
+                        _print_header("SAMPLE DEBUG :: CLASSIFIED EXECUTION")
+                        print(adapter.classify_execution(exec_result))
 
-                if debug_mode == "sample":
-                    _print_header("SAMPLE DEBUG :: EXEC RESULT OBJECT")
-                    print(exec_result)
-                    _print_header("SAMPLE DEBUG :: CLASSIFIED EXECUTION")
-                    print(adapter.classify_execution(exec_result))
+                    attempt_record = adapter.make_attempt_record(
+                        sample=sample,
+                        method=method_name,
+                        model_name=model_name,
+                        attempt_idx=0,
+                        prompt=initial_prompt,
+                        raw_output=raw_text,
+                        generated_code=generated_code,
+                        latency_sec=latency_sec,
+                        exec_result=exec_result,
+                    )
 
-                attempt_record = adapter.make_attempt_record(
-                    sample=sample,
-                    method=method_name,
-                    model_name=model_name,
-                    attempt_idx=0,
-                    prompt=initial_prompt,
-                    raw_output=raw_text,
-                    generated_code=generated_code,
-                    latency_sec=latency_sec,
-                    exec_result=exec_result,
-                )
+                    if debug_mode == "sample":
+                        _print_header("SAMPLE DEBUG :: ATTEMPT RECORD")
+                        print(attempt_record)
 
-                if debug_mode == "sample":
-                    _print_header("SAMPLE DEBUG :: ATTEMPT RECORD")
-                    print(attempt_record)
+                    final_attempt_record = attempt_record
+                    final_exec_result = exec_result
+                    latest_code = generated_code
+                    current_status = attempt_record.status
+                    transition_path.append(current_status)
 
-                final_attempt_record = attempt_record
-                current_status = attempt_record.status
-                transition_path.append(current_status)
+                    if str(current_status).startswith("EXEC_FAIL"):
+                        num_exec_fail += 1
+                    if str(current_status).startswith("TEST_FAIL"):
+                        num_test_fail += 1
 
-                if str(current_status).startswith("EXEC_FAIL"):
-                    num_exec_fail += 1
-                if str(current_status).startswith("TEST_FAIL"):
-                    num_test_fail += 1
+                    step_entry = {
+                        "run_id": run_id,
+                        "dataset": dataset_name,
+                        "problem_id": problem_id,
+                        "method": method_name,
+                        "trajectory_id": trajectory_id,
+                        "step_id": 0,
+                        "call_index": 0,
+                        "candidate_id": 0,
+                        "stage": "generate",
+                        "is_retry": False,
+                        "is_repair": False,
+                        "is_planner": False,
+                        "policy_action": "generate",
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                        "latency_sec": latency_sec,
+                        # ── entropy
+                        # **entropy_fields,
+                        "code": generated_code if save_code else None,
+                        "planner_output": None,
+                        "exec_ok": attempt_record.exec_ok,
+                        "test_pass": attempt_record.test_pass,
+                        "status": current_status,
+                        "error_type": attempt_record.error_type,
+                        "error_stage": attempt_record.error_stage,
+                        "error_message": attempt_record.error_message,
+                        "tests_passed": attempt_record.tests_passed,
+                        "tests_total": attempt_record.tests_total,
+                        "code_length": len(generated_code) if generated_code else 0,
+                        "selected": None,
+                        "selection_rank": None,
+                    }
+                    if hasattr(sample, "entry_point"):
+                        step_entry["entry_point"] = sample.entry_point
 
-                step_entry = {
-                    "run_id": run_id,
-                    "dataset": dataset_name,
-                    "problem_id": problem_id,
-                    "method": method_name,
-                    "trajectory_id": trajectory_id,
-                    "step_id": 0,
-                    "call_index": 0,
-                    "candidate_id": 0,
-                    "stage": "generate",
-                    "is_retry": False,
-                    "is_repair": False,
-                    "is_planner": False,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "total_tokens": total_tokens,
-                    "latency_sec": latency_sec,
-                    "code": generated_code if save_code else None,
-                    "exec_ok": attempt_record.exec_ok,
-                    "test_pass": attempt_record.test_pass,
-                    "status": current_status,
-                    "error_type": attempt_record.error_type,
-                    "error_stage": attempt_record.error_stage,
-                    "error_message": attempt_record.error_message,
-                    "tests_passed": attempt_record.tests_passed,
-                    "tests_total": attempt_record.tests_total,
-                    "code_length": len(generated_code) if generated_code else 0,
-                    "selected": None,
-                    "selection_rank": None,
-                }
-                if hasattr(sample, "entry_point"):
-                    step_entry["entry_point"] = sample.entry_point
+                    if save_step_level:
+                        step_logs.append(step_entry)
 
-                step_logs.append(step_entry)
+                    pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
+                    print(f"  generate: {pretty}  ")
 
-                pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                print(f"  generate: {pretty}")
+                    _collect_failure_example(
+                        failure_examples,
+                        problem_id=problem_id,
+                        attempt_idx=0,
+                        status=current_status,
+                        prompt=initial_prompt,
+                        raw_text=raw_text,
+                        generated_code=generated_code,
+                        error_type=attempt_record.error_type,
+                        error_stage=attempt_record.error_stage,
+                        error_message=attempt_record.error_message,
+                    )
 
-                _collect_failure_example(
-                    failure_examples,
-                    problem_id=problem_id,
-                    attempt_idx=0,
-                    status=current_status,
-                    prompt=initial_prompt,
-                    raw_text=raw_text,
-                    generated_code=generated_code,
-                    error_type=attempt_record.error_type,
-                    error_stage=attempt_record.error_stage,
-                    error_message=attempt_record.error_message,
-                )
+            # =========================================================
+            # Planning loop: generic plan -> plan_code 반복
+            # =========================================================
+            while (
+                final_attempt_record is not None
+                and not final_attempt_record.passed
+                and call_count + 2 <= max_calls
+            ):
+                used_plan = True
+                plan_attempt_count += 1
 
-                stage1_passed = attempt_record.passed
-                stage1_code = generated_code
-                stage1_error_message = attempt_record.error_message
-
-            # ═══════════════════════════════════════════
-            # Stage 2: 실패 시 Plan → Code
-            # ═══════════════════════════════════════════
-            if not final_attempt_record.passed:
-
-                # ── 2a. Planner ──
+                # ── 1) plan
                 planner_prompt = build_planner_prompt_for_sample(sample)
 
                 orig_tokens = model.max_new_tokens
@@ -513,6 +531,7 @@ def run_code_then_plan(config_path: str):
                 plan_input_tokens = plan_gen_result["input_tokens"]
                 plan_output_tokens = plan_gen_result["output_tokens"]
                 plan_total_tokens = plan_gen_result["total_tokens"]
+                # plan_entropy_fields = _extract_entropy_fields(plan_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += plan_input_tokens
@@ -523,24 +542,26 @@ def run_code_then_plan(config_path: str):
                 planner_output = extract_planner_output(plan_raw_text)
                 transition_path.append("PLAN_DONE")
 
-                # planner step log
                 plan_step_entry = {
                     "run_id": run_id,
                     "dataset": dataset_name,
                     "problem_id": problem_id,
                     "method": method_name,
                     "trajectory_id": trajectory_id,
-                    "step_id": 1,
-                    "call_index": 1,
+                    "step_id": len(step_logs),
+                    "call_index": call_count - 1,
                     "candidate_id": 0,
                     "stage": "plan",
                     "is_retry": False,
                     "is_repair": False,
                     "is_planner": True,
+                    "policy_action": "plan",
                     "input_tokens": plan_input_tokens,
                     "output_tokens": plan_output_tokens,
                     "total_tokens": plan_total_tokens,
                     "latency_sec": plan_latency,
+                    # ── entropy (planner 자체의 불확실성)
+                    # **plan_entropy_fields,
                     "code": None,
                     "planner_output": planner_output if save_code else None,
                     "exec_ok": None,
@@ -558,10 +579,12 @@ def run_code_then_plan(config_path: str):
                 if hasattr(sample, "entry_point"):
                     plan_step_entry["entry_point"] = sample.entry_point
 
-                step_logs.append(plan_step_entry)
-                print(f"  plan: 📝 {planner_output[:80].replace(chr(10), ' ')}...")
+                if save_step_level:
+                    step_logs.append(plan_step_entry)
+                print(f"  plan[{plan_attempt_count}]: 📝 "
+                      f"{planner_output[:60].replace(chr(10), ' ')}...")
 
-                # ── 2b. Plan 기반 코드 재생성 ──
+                # ── 2) plan_code
                 coder_prompt = build_coder_prompt_for_sample(sample, planner_output)
 
                 model.max_new_tokens = coder_max_tokens
@@ -577,6 +600,7 @@ def run_code_then_plan(config_path: str):
                 code2_input_tokens = code2_gen_result["input_tokens"]
                 code2_output_tokens = code2_gen_result["output_tokens"]
                 code2_total_tokens = code2_gen_result["total_tokens"]
+                # code2_entropy_fields = _extract_entropy_fields(code2_gen_result)
 
                 call_count += 1
                 cumulative_input_tokens += code2_input_tokens
@@ -584,17 +608,13 @@ def run_code_then_plan(config_path: str):
                 cumulative_total_tokens += code2_total_tokens
                 cumulative_latency += code2_latency
 
-                # sample 모드 디버그
-                if debug_mode == "sample":
-                    _print_sample_execution_flow(
-                        sample=sample,
-                        prompt=coder_prompt,
-                        raw_text=code2_raw_text,
-                    )
-
-                # Stage 2 empty_output 차단
                 if code2_output_tokens == 0 or not code2_raw_text.strip():
-                    current_status = "CODE_FAIL:empty_output"
+                    final_attempt_record = _make_empty_output_record(
+                        "Model output was empty (plan_code stage)."
+                    )
+                    final_exec_result = final_attempt_record
+                    latest_code = None
+                    current_status = final_attempt_record.status
                     transition_path.append(current_status)
 
                     code2_step_entry = {
@@ -603,47 +623,67 @@ def run_code_then_plan(config_path: str):
                         "problem_id": problem_id,
                         "method": method_name,
                         "trajectory_id": trajectory_id,
-                        "step_id": 2,
-                        "call_index": 2,
+                        "step_id": len(step_logs),
+                        "call_index": call_count - 1,
                         "candidate_id": 0,
                         "stage": "plan_code",
                         "is_retry": False,
                         "is_repair": False,
                         "is_planner": False,
+                        "policy_action": "generate",
                         "input_tokens": code2_input_tokens,
                         "output_tokens": code2_output_tokens,
                         "total_tokens": code2_total_tokens,
                         "latency_sec": code2_latency,
+                        # ── entropy
+                        # **code2_entropy_fields,
                         "code": None,
+                        "planner_output": None,
                         "exec_ok": False,
                         "test_pass": False,
                         "status": current_status,
-                        "error_type": "empty_output",
-                        "error_stage": "code",
-                        "error_message": "Model output was empty (plan_code stage).",
-                        "tests_passed": 0,
-                        "tests_total": None,
+                        "error_type": final_attempt_record.error_type,
+                        "error_stage": final_attempt_record.error_stage,
+                        "error_message": final_attempt_record.error_message,
+                        "tests_passed": final_attempt_record.tests_passed,
+                        "tests_total": final_attempt_record.tests_total,
                         "code_length": 0,
                         "selected": None,
                         "selection_rank": None,
                     }
                     if hasattr(sample, "entry_point"):
                         code2_step_entry["entry_point"] = sample.entry_point
+                    if save_step_level:
+                        step_logs.append(code2_step_entry)
+                    print(f"  plan_code[{plan_attempt_count}]: ❌ {current_status}")
 
-                    step_logs.append(code2_step_entry)
-
-                    final_attempt_record = SimpleNamespace(
+                    _collect_failure_example(
+                        failure_examples,
+                        problem_id=problem_id,
+                        attempt_idx=plan_attempt_count,
                         status=current_status,
-                        tests_passed=0,
-                        tests_total=None,
-                        passed=False,
+                        prompt=coder_prompt,
+                        raw_text=code2_raw_text,
+                        generated_code=None,
+                        error_type=final_attempt_record.error_type,
+                        error_stage=final_attempt_record.error_stage,
+                        error_message=final_attempt_record.error_message,
                     )
 
-                    print(f"  plan_code: ❌ {current_status}")
-
                 else:
-                    # Stage 2 정상 경로
-                    code2_generated = adapter.extract_code_for_planner(sample, code2_raw_text)
+                    if hasattr(adapter, "extract_code_for_planner"):
+                        code2_generated = adapter.extract_code_for_planner(sample, code2_raw_text)
+                    else:
+                        code2_generated = adapter.extract_code(sample, code2_raw_text)
+
+                    if debug_mode == "sample":
+                        _print_sample_execution_flow(
+                            sample=sample,
+                            prompt=coder_prompt,
+                            raw_text=code2_raw_text,
+                            generated_code=code2_generated,
+                        )
+
                     exec_result = adapter.execute(sample, code2_generated)
 
                     if debug_mode == "sample":
@@ -656,7 +696,7 @@ def run_code_then_plan(config_path: str):
                         sample=sample,
                         method=method_name,
                         model_name=model_name,
-                        attempt_idx=1,
+                        attempt_idx=plan_attempt_count,
                         prompt=coder_prompt,
                         raw_output=code2_raw_text,
                         generated_code=code2_generated,
@@ -669,6 +709,8 @@ def run_code_then_plan(config_path: str):
                         print(code2_record)
 
                     final_attempt_record = code2_record
+                    final_exec_result = exec_result
+                    latest_code = code2_generated
                     current_status = code2_record.status
                     transition_path.append(current_status)
 
@@ -683,18 +725,22 @@ def run_code_then_plan(config_path: str):
                         "problem_id": problem_id,
                         "method": method_name,
                         "trajectory_id": trajectory_id,
-                        "step_id": 2,
-                        "call_index": 2,
+                        "step_id": len(step_logs),
+                        "call_index": call_count - 1,
                         "candidate_id": 0,
                         "stage": "plan_code",
                         "is_retry": False,
                         "is_repair": False,
                         "is_planner": False,
+                        "policy_action": "generate",
                         "input_tokens": code2_input_tokens,
                         "output_tokens": code2_output_tokens,
                         "total_tokens": code2_total_tokens,
                         "latency_sec": code2_latency,
+                        # ── entropy
+                        # **code2_entropy_fields,
                         "code": code2_generated if save_code else None,
+                        "planner_output": None,
                         "exec_ok": code2_record.exec_ok,
                         "test_pass": code2_record.test_pass,
                         "status": current_status,
@@ -710,15 +756,16 @@ def run_code_then_plan(config_path: str):
                     if hasattr(sample, "entry_point"):
                         code2_step_entry["entry_point"] = sample.entry_point
 
-                    step_logs.append(code2_step_entry)
+                    if save_step_level:
+                        step_logs.append(code2_step_entry)
 
                     pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  plan_code: {pretty}")
+                    print(f"  plan_code[{plan_attempt_count}]: {pretty}  ")
 
                     _collect_failure_example(
                         failure_examples,
                         problem_id=problem_id,
-                        attempt_idx=1,
+                        attempt_idx=plan_attempt_count,
                         status=current_status,
                         prompt=coder_prompt,
                         raw_text=code2_raw_text,
@@ -728,17 +775,37 @@ def run_code_then_plan(config_path: str):
                         error_message=code2_record.error_message,
                     )
 
-            # ═══════════════════════════════════════════
-            # 문제 종료 처리
-            # ═══════════════════════════════════════════
-            eval_results.append(exec_result)
+                if final_attempt_record.passed:
+                    break
 
+            if final_exec_result is None:
+                final_exec_result = _make_empty_output_record("No executable result was produced.")
+            if final_attempt_record is None:
+                final_attempt_record = _make_empty_output_record("No attempt record was produced.")
+            
+            setattr(final_exec_result, "num_calls", call_count)
+            eval_results.append(SimpleNamespace(
+                status=final_attempt_record.status,
+                passed=final_attempt_record.passed,
+                exec_ok=final_attempt_record.exec_ok,
+                test_pass=final_attempt_record.test_pass,
+                tests_passed=final_attempt_record.tests_passed,
+                tests_total=final_attempt_record.tests_total,
+                error_type=getattr(final_attempt_record, "error_type", None),
+                error_stage=getattr(final_attempt_record, "error_stage", None),
+                num_calls=call_count,
+            ))
+            
             final_status = final_attempt_record.status
+            failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
 
-            if final_status == "PASS":
-                failure_family = "PASS"
-            else:
-                failure_family = str(final_status).split(":")[0]
+            # trajectory 수준 entropy 시계열 (plan_code step만 — 코드 생성 step 기준)
+            code_steps = [
+                s for s in step_logs
+                if s["trajectory_id"] == trajectory_id
+                and s["stage"] in ("generate", "plan_code")
+            ]
+            entropy_series = [s["avg_entropy"] for s in code_steps]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -759,35 +826,45 @@ def run_code_then_plan(config_path: str):
                 "num_exec_fail": num_exec_fail,
                 "num_test_fail": num_test_fail,
                 "transition_path": transition_path,
-                "used_plan": call_count > 1,
+                "used_plan": used_plan,
+                # ── entropy 시계열 요약
+                "entropy_series": entropy_series,
+                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,
                     "latency": cumulative_latency,
                 },
+                "recovered_by": (
+                    "generate" if (not used_plan and final_status == "PASS")
+                    else "plan_code" if (used_plan and final_status == "PASS")
+                    else None
+                ),
+                "plan_recovery_attempt": (
+                    plan_attempt_count if (used_plan and final_status == "PASS")
+                    else None
+                ),
             }
 
-            trajectory_logs.append(trajectory_entry)
+            if save_trajectory_level:
+                trajectory_logs.append(trajectory_entry)
 
-            # OOM 방지
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-            del gen_result, step_entry, trajectory_entry
-            del exec_result
+            del final_exec_result
             gc.collect()
 
-        # ── 5. 결과 요약 ──
-        summary = summarize_phase1_results(eval_results)
-
+        summary = summarize_phase1_results(eval_results, k=max_calls)
+        success_key = f"success@{max_calls}"
+        
         print(f"\n{'=' * 60}")
         print("📊 결과 요약")
         print(f"  총 문제: {summary['total']}")
-        print(f"  통과: {summary['passed']}")
+        print(f"  성공: {summary['success']}")
         print(f"  실행 성공: {summary['exec_success']}")
-        print(f"  pass@1: {summary['pass@1']:.4f}")
+        print(f"  {success_key}: {summary[success_key]:.4f}")
         print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
-        print(f"  conditional_pass: {summary['conditional_pass']:.4f}")
+        print(f"  conditional_success: {summary['conditional_success']:.4f}")
         print(f"{'=' * 60}")
 
         extra_summary = summarize_failure_breakdown(eval_results)
@@ -796,17 +873,24 @@ def run_code_then_plan(config_path: str):
         print(f"  run_test_failed: {extra_summary['run_test_failed']}")
         print(f"{'=' * 60}")
 
-        # plan 사용 통계
         n_used_plan = sum(1 for t in trajectory_logs if t.get("used_plan", False))
         n_plan_recovered = sum(
             1 for t in trajectory_logs
-            if t.get("used_plan") and t["final_status"] == "PASS"
+            if t.get("recovered_by") == "plan_code"
         )
-        print(f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} ({n_used_plan/len(trajectory_logs)*100:.1f}%)")
-        print(f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} ({n_plan_recovered/n_used_plan*100:.1f}%)" if n_used_plan > 0 else "  plan 복구 성공: 0/0")
+
+        print(
+            f"  plan 사용: {n_used_plan}/{len(trajectory_logs)} "
+            f"({n_used_plan/len(trajectory_logs)*100:.1f}%)"
+            if len(trajectory_logs) > 0 else "  plan 사용: 0/0"
+        )
+        print(
+            f"  plan 복구 성공: {n_plan_recovered}/{n_used_plan} "
+            f"({n_plan_recovered/n_used_plan*100:.1f}%)"
+            if n_used_plan > 0 else "  plan 복구 성공: 0/0"
+        )
         print(f"{'=' * 60}")
 
-        # ── 6. Problem-level summary ──
         avg_tokens = (
             sum(x["total_tokens"] for x in trajectory_logs) / len(trajectory_logs)
             if trajectory_logs else 0.0
@@ -824,11 +908,13 @@ def run_code_then_plan(config_path: str):
             "run_id": run_id,
             "dataset": dataset_name,
             "method": method_name,
+            "max_calls": max_calls,
             "total_problems": summary["total"],
-            "num_pass": summary["passed"],
-            "pass_at_1": summary["pass@1"],
+            "num_success": summary["success"],
+            "success_metric_name": success_key,
+            "success_at_k": summary[success_key],
             "execution_success_rate": summary["execution_success_rate"],
-            "conditional_pass": summary["conditional_pass"],
+            "conditional_success": summary["conditional_success"],
             "avg_tokens": avg_tokens,
             "avg_latency": avg_latency,
             "avg_calls": avg_calls,
@@ -840,7 +926,6 @@ def run_code_then_plan(config_path: str):
             },
         }
 
-        # ── 7. Run-level analysis ──
         transition_counts = {}
         failure_type_counts = {}
         failure_family_counts = {}
@@ -873,32 +958,18 @@ def run_code_then_plan(config_path: str):
             "failure_family_counts": failure_family_counts,
         }
 
-        # ── 8. 결과 저장 ──
         if save_step_level:
-            save_results_jsonl(
-                step_logs,
-                os.path.join(output_dir, "step_logs.jsonl"),
-            )
+            save_results_jsonl(step_logs, os.path.join(output_dir, "step_logs.jsonl"))
 
         if save_trajectory_level:
-            save_results_jsonl(
-                trajectory_logs,
-                os.path.join(output_dir, "trajectory_logs.jsonl"),
-            )
+            save_results_jsonl(trajectory_logs, os.path.join(output_dir, "trajectory_logs.jsonl"))
 
         if save_problem_summary:
-            save_result(
-                problem_summary,
-                os.path.join(output_dir, "summary.json"),
-            )
+            save_result(problem_summary, os.path.join(output_dir, "summary.json"))
 
         if save_run_analysis:
-            save_result(
-                run_analysis,
-                os.path.join(output_dir, "analysis.json"),
-            )
+            save_result(run_analysis, os.path.join(output_dir, "analysis.json"))
 
-        # ── 9. 실패 유형별 대표 예시 저장 ──
         if failure_examples:
             save_result(
                 failure_examples,
@@ -907,7 +978,6 @@ def run_code_then_plan(config_path: str):
             print(f"📝 failure_examples: {len(failure_examples)}개 유형 저장됨")
 
     finally:
-        # sample 모드에서 stdout 복구
         if log_fp is not None:
             log_fp.close()
             sys.stdout = stdout_backup
