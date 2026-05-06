@@ -1,30 +1,30 @@
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/qwen/configs_humaneval/code_then_plan_repair.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/llama/configs_bigcode/code_then_plan_repair.yaml
 
 run:
-  run_id: "phase1_qwen25coder7b_humaneval_code_then_plan_repair"
+  run_id: "llama31_8b_bigcode_code_then_plan_repair"
   seed: 42
 
 dataset:
-  name: humaneval        # humaneval | mbpp
-  num_samples: 164        
+  name: bigcode        # humaneval | mbpp
+  num_samples: 1140        
 
 method:
   name: code_then_plan_repair
 
 model:
-  name:  "Qwen/Qwen2.5-Coder-7B-Instruct"
+  name: "meta-llama/Llama-3.1-8B-Instruct"
   temperature: 0.2
   planner:
-    name:  "Qwen/Qwen2.5-Coder-7B-Instruct"
+    name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 256
     temperature: 0.2
   coder:
-    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 512
     temperature: 0.2
   repair:
-    name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+    name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 512
     temperature: 0.2
 
@@ -32,7 +32,7 @@ budget:
   max_calls: 20           # generate + plan + plan_code + repair
   
 output:
-  dir: "results/qwen25coder7b/humaneval/code_then_plan_repair"
+  dir: "results/llama/bigcode/code_then_plan_repair"
 
 logging:
   save_step_level: true          # 필수 (stage별 토큰 확인)

@@ -1,6 +1,7 @@
 # PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/phi/configs_humaneval/code_then_plan_repair.yaml
 
 run:
+  run_id: "phase2_phi35mini_humaneval_code_then_plan_repair"
   seed: 42
 
 dataset:

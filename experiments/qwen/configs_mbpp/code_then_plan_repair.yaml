@@ -1,6 +1,7 @@
 # PYTHONPATH=. python -m src.orchestration.code_then_plan_repair experiments/qwen/configs_mbpp/code_then_plan_repair.yaml
 
 run:
+  run_id: "phase1_qwen25coder7b_mbpp_code_then_plan_repair"
   seed: 42
 
 dataset:
