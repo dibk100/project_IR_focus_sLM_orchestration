@@ -1,7 +1,7 @@
-# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/phi/configs_mbpp/code_then_plan.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/llama/configs_mbpp/code_then_plan.yaml
 
 run:
-  run_id: "phase2_phi25coder7b_mbpp_code_then_plan"
+  run_id: "llama318b_mbpp_code_then_plan"
   seed: 42
 
 dataset:
@@ -9,14 +9,16 @@ dataset:
   num_samples: 374
 
 model:
-  name: "microsoft/Phi-3.5-mini-instruct"
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  backend: "vllm_server"
+  api_base: "http://localhost:8000/v1"
   temperature: 0.2
   planner:
-    name: "microsoft/Phi-3.5-mini-instruct"
+    name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 256
     temperature: 0.2
   coder:
-    name: "microsoft/Phi-3.5-mini-instruct"
+    name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 512
     temperature: 0.2
 
@@ -27,7 +29,7 @@ budget:
   max_calls: 20
 
 output:
-  dir: "results/phi/mbpp/code_then_plan"
+  dir: "results/llama/mbpp/code_then_plan"
 
 logging:
   save_step_level: true

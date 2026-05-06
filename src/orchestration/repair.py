@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import yaml
 import torch
 
-from src.models.hf_model import HFModel
+from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
 from src.utils.io import save_result, save_results_jsonl, make_run_id
 from src.utils.dataloader import load_task_and_adapter
@@ -266,6 +266,8 @@ def run_repair_loop(config_path: str):
             model_name=model_name,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
+            backend=model_cfg.get("backend", "hf"),   # 추가
+            api_base=model_cfg.get("api_base", None), # 추가
         )
         print("✅ 모델 로딩 완료")
 

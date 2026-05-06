@@ -11,6 +11,9 @@ dataset:
 
 model:
   name: "microsoft/Phi-3.5-mini-instruct"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
   temperature: 0.2
   planner:
     name: "microsoft/Phi-3.5-mini-instruct"

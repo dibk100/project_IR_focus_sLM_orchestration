@@ -37,3 +37,6 @@ repair
 💾 결과 저장: results/phi35mini/humaneval/repair/failure_examples.json
 📝 failure_examples: 11개 유형 저장됨
 
+plan에서 걸림
+-----------------------------
+Qwen

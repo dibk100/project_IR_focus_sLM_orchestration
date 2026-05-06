@@ -1,7 +1,7 @@
-# PYTHONPATH=. python -m src.orchestration.repair experiments/phi/configs_mbpp/repair.yaml
+# PYTHONPATH=. python -m src.orchestration.repair experiments/llama/configs_mbpp/repair.yaml
 
 run:
-  run_id: "phase2_phi25coder7b_mbpp_repair"
+  run_id: "llama318b_mbpp_repair"
   seed: 42
 
 dataset:
@@ -9,7 +9,9 @@ dataset:
   num_samples: 374
 
 model:
-  name: "microsoft/Phi-3.5-mini-instruct"
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  backend: "vllm_server"
+  api_base: "http://localhost:8000/v1"
   max_new_tokens: 512
   temperature: 0.2
 
@@ -20,7 +22,7 @@ budget:
   max_calls: 20
 
 output:
-  dir: "results/phi/mbpp/repair"
+  dir: "results/llama/mbpp/repair"
 
 logging:
   save_step_level: true
