@@ -254,6 +254,7 @@ def summarize_phase1_results(
     exec_success_count = sum(1 for r in results if is_exec_success(r))
 
     success_key = f"success@{k}"
+    curve = success_at_k_curve(results, max_k=k)
 
     summary = {
         "total": total,
@@ -262,6 +263,8 @@ def summarize_phase1_results(
         success_key: success_at_k(results, k=k),
         "execution_success_rate": execution_success_rate(results),
         "conditional_success": conditional_pass(results),
+        "ausc": ausc(results, max_k=k),
+        "success_at_k_curve": curve,
     }
 
     if single_baseline_pass_at_1 is not None:
@@ -369,3 +372,39 @@ def summarize_failure_breakdown(results: List[ResultType]) -> dict:
         "define_test_failed": define_test_failed,
         "run_test_failed": run_test_failed,
     }
+    
+def success_at_k_curve(results: List[ResultType], max_k: int = 20) -> Dict[str, float]:
+    """
+    Success@k curve 계산.
+
+    의미:
+    - k = 1부터 max_k까지,
+      각 시점까지 성공한 문제 비율을 누적 성공률로 계산한다.
+
+    예:
+    - 3회 만에 성공한 문제는 Success@1, @2에서는 실패,
+      Success@3 이후부터는 성공으로 계산된다.
+    """
+    return {
+        f"success@{k}": success_at_k(results, k=k)
+        for k in range(1, max_k + 1)
+    }
+
+
+def ausc(results: List[ResultType], max_k: int = 20) -> float:
+    """
+    AUSC: Area Under Success Curve.
+
+    의미:
+    - Success@k curve의 평균값
+    - 빠르게 성공할수록 높은 값을 가진다.
+    - final success뿐 아니라 recovery speed / budget efficiency를 반영한다.
+    """
+    if not results or max_k <= 0:
+        return 0.0
+
+    curve_values = [
+        success_at_k(results, k=k)
+        for k in range(1, max_k + 1)
+    ]
+    return sum(curve_values) / max_k

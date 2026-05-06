@@ -14,6 +14,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.models.base import BaseModel
 
+import httpx
+from openai import OpenAI
+
 
 class HFModel(BaseModel):
 
@@ -74,13 +77,20 @@ class HFModel(BaseModel):
     def _generate_vllm(self, prompt: str, **kwargs) -> Dict[str, Any]:
         max_new_tokens = kwargs.get("max_new_tokens", self.max_new_tokens)
         temperature = kwargs.get("temperature", self.temperature)
-
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=120.0,   # ← 핵심
+            write=10.0,
+            pool=10.0
+        )
+        
         t0 = time.perf_counter()
         response = self.client.completions.create(
             model=self.model_name,
             prompt=prompt,
             max_tokens=max_new_tokens,
             temperature=temperature,
+            timeout=timeout,
         )
         # response = self.client.chat.completions.create(
         #     model=self.model_name,

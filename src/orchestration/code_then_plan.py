@@ -867,6 +867,7 @@ def run_code_then_plan(config_path: str):
         print(f"  {success_key}: {summary[success_key]:.4f}")
         print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
         print(f"  conditional_success: {summary['conditional_success']:.4f}")
+        print(f"  AUSC: {summary['ausc']:.4f}")
         print(f"{'=' * 60}")
 
         extra_summary = summarize_failure_breakdown(eval_results)
@@ -915,6 +916,8 @@ def run_code_then_plan(config_path: str):
             "num_success": summary["success"],
             "success_metric_name": success_key,
             "success_at_k": summary[success_key],
+            "success_at_k_curve": summary["success_at_k_curve"],
+            "ausc": summary["ausc"],
             "execution_success_rate": summary["execution_success_rate"],
             "conditional_success": summary["conditional_success"],
             "avg_tokens": avg_tokens,

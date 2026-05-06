@@ -1,10 +1,6 @@
 """
 Policy
 
-stage별 오류 유형과, 실패 반복 패턴을 기반으로, repair / replan 중 적절한 전략을 동적으로 선택하는 policy를 구현하고자 함.
-제한된 budget 내에서 문제 해결 확률을 극대화하는 것을 목표로 하고 싶었으나, 사실상 간단한 rule-based로 구현됨.
-
-
 State = {
     failure_type : 현재 실행 결과의 상위 실패 단계 (PASS / EXEC_FAIL / TEST_FAIL)
     error_type : 실패의 구체적인 에러 타입 
@@ -1312,6 +1308,7 @@ def run_policy_loop(config_path: str):
     print(f"  {success_key}: {summary[success_key]:.4f}")
     print(f"  execution_success_rate: {summary['execution_success_rate']:.4f}")
     print(f"  conditional_success: {summary['conditional_success']:.4f}")
+    print(f"  AUSC: {summary['ausc']:.4f}")
     print(f"{'=' * 60}")
     
     extra_summary = summarize_failure_breakdown(eval_results)
@@ -1410,6 +1407,8 @@ def run_policy_loop(config_path: str):
                 "num_success": summary["success"],
                 "success_metric_name": success_key,
                 "success_at_k": summary[success_key],
+                "success_at_k_curve": summary["success_at_k_curve"],
+                "ausc": summary["ausc"],
                 "execution_success_rate": summary["execution_success_rate"],
                 "conditional_success": summary["conditional_success"],
                 "extra_summary": extra_summary,
