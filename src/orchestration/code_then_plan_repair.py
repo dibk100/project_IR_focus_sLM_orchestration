@@ -1059,7 +1059,7 @@ def run_code_then_plan_repair(config_path: str):
                 if s["trajectory_id"] == trajectory_id
                 and s["stage"] in ("generate", "plan_code", "repair")
             ]
-            entropy_series = [s["avg_entropy"] for s in code_steps]
+            # entropy_series = [s["avg_entropy"] for s in code_steps]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -1083,8 +1083,8 @@ def run_code_then_plan_repair(config_path: str):
                 "used_plan": used_plan,
                 "used_repair": used_repair,
                 # ── entropy 시계열 요약
-                "entropy_series": entropy_series,
-                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
+                # "entropy_series": entropy_series,
+                # "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,

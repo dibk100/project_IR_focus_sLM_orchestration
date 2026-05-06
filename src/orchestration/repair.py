@@ -514,10 +514,10 @@ def run_repair_loop(config_path: str):
             failure_family = "PASS" if final_status == "PASS" else str(final_status).split(":")[0]
 
             # trajectory 수준 entropy 요약: 각 step의 avg_entropy 시계열
-            entropy_series = [
-                s["avg_entropy"] for s in step_logs
-                if s["trajectory_id"] == trajectory_id
-            ]
+            # entropy_series = [
+            #     s["avg_entropy"] for s in step_logs
+            #     if s["trajectory_id"] == trajectory_id
+            # ]
 
             trajectory_entry = {
                 "run_id": run_id,
@@ -537,8 +537,8 @@ def run_repair_loop(config_path: str):
                 "num_test_fail": num_test_fail,
                 "transition_path": transition_path,
                 # ── entropy 시계열 요약 (trajectory 수준)
-                "entropy_series": entropy_series,
-                "initial_avg_entropy": entropy_series[0] if entropy_series else None,
+                # "entropy_series": entropy_series,
+                # "initial_avg_entropy": entropy_series[0] if entropy_series else None,
                 "budget_used": {
                     "tokens": cumulative_total_tokens,
                     "calls": call_count,
