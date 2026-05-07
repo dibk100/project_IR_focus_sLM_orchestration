@@ -17,7 +17,7 @@ def load_task_and_adapter(dataset_name: str):
     if dataset_name == "humaneval_pro":
         return HumanEvalTask(), HumanEvalAdapter()
 
-    if dataset_name == "mbpp":
+    if dataset_name in ["mbpp", "mbpp_sanitized"]:
         return MBPPTask(), MBPPAdapter()
     
     if dataset_name == "bigcode":

@@ -6,7 +6,7 @@ run:
 
 dataset:
   name: "mbpp"
-  num_samples: 374
+  num_samples: 257
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"

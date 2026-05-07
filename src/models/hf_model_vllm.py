@@ -88,37 +88,39 @@ class HFModel(BaseModel):
         max_new_tokens = kwargs.get("max_new_tokens", self.max_new_tokens)
         temperature = kwargs.get("temperature", self.temperature)
 
-        t0 = time.perf_counter()
-        response = self.client.completions.create(
-            model=self.model_name,
-            prompt=prompt,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-        )
-        # response = self.client.chat.completions.create(
-        #     model=self.model_name,
-        #     messages=[
-        #         {"role": "user", "content": prompt}
-        #     ],
-        #     max_tokens=max_new_tokens,
-        #     temperature=temperature,
-        # )
-        latency = time.perf_counter() - t0
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                t0 = time.perf_counter()
+                response = self.client.completions.create(
+                    model=self.model_name,
+                    prompt=prompt,
+                    max_tokens=max_new_tokens,
+                    temperature=temperature,
+                )
+                latency = time.perf_counter() - t0
 
-        text = response.choices[0].text
-        # text = response.choices[0].message.content
-        usage = getattr(response, "usage", None)
-        prompt_tokens     = getattr(usage, "prompt_tokens",     0) if usage else 0
-        completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
-        total_tokens      = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) if usage else (prompt_tokens + completion_tokens)
+                text = response.choices[0].text
+                usage = getattr(response, "usage", None)
+                prompt_tokens     = getattr(usage, "prompt_tokens",     0) if usage else 0
+                completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                total_tokens      = getattr(usage, "total_tokens", prompt_tokens + completion_tokens) if usage else (prompt_tokens + completion_tokens)
 
-        return {
-            "text":         text,
-            "input_tokens": prompt_tokens,
-            "output_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "latency_sec":  latency,
-        }
+                return {
+                    "text":         text,
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "latency_sec":  latency,
+                }
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait = 5 * (attempt + 1)
+                    print(f"  ⚠️ vLLM API 오류 (시도 {attempt+1}/{max_retries}): {e}")
+                    print(f"     {wait}초 후 재시도...")
+                    time.sleep(wait)
+                else:
+                    raise
 
     def _generate_hf(self, prompt: str, **kwargs) -> Dict[str, Any]:
         max_new_tokens = kwargs.get("max_new_tokens", self.max_new_tokens)

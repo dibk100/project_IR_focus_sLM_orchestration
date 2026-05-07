@@ -26,7 +26,7 @@ class MBPPTask(BaseTask[MBPPSample]):
                 os.path.join(os.path.dirname(__file__), "..", "..")
             )
             data_path = os.path.join(
-                project_root, "datasets", "mbpp", "raw", "mbpp.jsonl"
+                project_root, "datasets", "mbpp_sanitized", "raw", "mbpp_sanitized.jsonl"
             )
 
         self.data_path = Path(data_path)
@@ -37,15 +37,29 @@ class MBPPTask(BaseTask[MBPPSample]):
         with open(self.data_path, "r", encoding="utf-8") as f:
             for line in f:
                 raw = json.loads(line)
+
+                problem_text = raw.get("prompt") or raw.get("text")
+                if problem_text is None:
+                    raise ValueError(f"MBPP sample {raw.get('task_id')} has no prompt/text field.")
+
+                test_setup_code = raw.get("test_setup_code", "") or ""
+
+                # MBPP sanitized uses test_imports instead of test_setup_code.
+                if "test_imports" in raw and raw["test_imports"]:
+                    test_setup_code = "\n".join(raw["test_imports"])
+
                 self.samples.append(
                     MBPPSample(
                         task_id=str(raw["task_id"]),
-                        problem_text=raw["text"].strip(),
+                        problem_text=problem_text.strip(),
                         test_list=raw.get("test_list", []),
-                        test_setup_code=raw.get("test_setup_code", "") or "",
+                        test_setup_code=test_setup_code,
                         challenge_test_list=raw.get("challenge_test_list", []) or [],
                         reference_code=raw.get("code"),
-                        metadata={"dataset": "mbpp"},
+                        metadata={
+                            "dataset": "mbpp_sanitized"
+                            if "prompt" in raw else "mbpp"
+                        },
                     )
                 )
 

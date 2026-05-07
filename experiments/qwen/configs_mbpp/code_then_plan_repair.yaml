@@ -6,7 +6,7 @@ run:
 
 dataset:
   name: mbpp        # humaneval | mbpp
-  num_samples: 374        
+  num_samples: 257        
 
 method:
   name: code_then_plan_repair

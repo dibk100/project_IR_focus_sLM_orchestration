@@ -37,6 +37,12 @@ DATASET_REGISTRY = {
         "split": "train",                                       
         "save_name": "mbpp.jsonl",
     },
+    "mbpp_sanitized": {
+    "hf_name": "google-research-datasets/mbpp",
+    "config_name": "sanitized",
+    "split": "test",
+    "save_name": "mbpp_sanitized.jsonl",
+    },
     "codecontests": {
         "hf_name": "deepmind/code_contests",
         "split": "valid",
@@ -80,7 +86,17 @@ def download_dataset(dataset_key: str):
     print(f"🔄 Downloading {dataset_key} ...")
     print(f"   ↳ HF: {config['hf_name']} ({config['split']})")
 
-    dataset = load_dataset(config["hf_name"], split=config["split"])
+    if "config_name" in config:
+        dataset = load_dataset(
+            config["hf_name"],
+            config["config_name"],
+            split=config["split"]
+        )
+    else:
+        dataset = load_dataset(
+            config["hf_name"],
+            split=config["split"]
+        )
 
     output_path = os.path.join(raw_dir, config["save_name"])
 
