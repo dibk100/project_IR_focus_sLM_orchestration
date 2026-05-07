@@ -1,0 +1,5 @@
+,PASS,AssertionError,SyntaxError,NameError,TypeError,PLAN_DONE
+AssertionError,0,0,0,0,0,0
+SyntaxError,0,0,0,0,0,0
+NameError,0,0,0,0,0,0
+TypeError,0,0,0,0,0,0

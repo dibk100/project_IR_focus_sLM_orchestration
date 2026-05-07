@@ -1,0 +1,2 @@
+method,avg_calls_all,avg_calls_success,avg_calls_failure,avg_tokens_all,avg_tokens_success,avg_tokens_failure
+repair_loop,4.378048780487805,1.434782608695652,20.0,3501.8414634146343,710.8405797101449,18315.615384615383

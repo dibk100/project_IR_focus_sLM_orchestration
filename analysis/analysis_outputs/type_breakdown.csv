@@ -1,0 +1,9 @@
+error_type,count
+NameError,345
+AssertionError,160
+SyntaxError,69
+IndentationError,2
+TypeError,1
+AttributeError,1
+ValueError,1
+IndexError,1

@@ -1,0 +1,165 @@
+method,problem_id,final_status,call_count,max_consecutive_test_fail,max_consecutive_exec_fail,transition_path
+repair_loop,HumanEval/0,PASS,1,0,0,PASS
+repair_loop,HumanEval/1,PASS,1,0,0,PASS
+repair_loop,HumanEval/2,EXEC_FAIL:NameError,20,0,20,EXEC_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/3,PASS,1,0,0,PASS
+repair_loop,HumanEval/4,PASS,1,0,0,PASS
+repair_loop,HumanEval/5,PASS,1,0,0,PASS
+repair_loop,HumanEval/6,PASS,1,0,0,PASS
+repair_loop,HumanEval/7,PASS,1,0,0,PASS
+repair_loop,HumanEval/8,PASS,1,0,0,PASS
+repair_loop,HumanEval/9,PASS,1,0,0,PASS
+repair_loop,HumanEval/10,EXEC_FAIL:NameError,20,1,19,TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/11,PASS,1,0,0,PASS
+repair_loop,HumanEval/12,PASS,1,0,0,PASS
+repair_loop,HumanEval/13,PASS,1,0,0,PASS
+repair_loop,HumanEval/14,PASS,1,0,0,PASS
+repair_loop,HumanEval/15,PASS,1,0,0,PASS
+repair_loop,HumanEval/16,PASS,1,0,0,PASS
+repair_loop,HumanEval/17,PASS,1,0,0,PASS
+repair_loop,HumanEval/18,PASS,1,0,0,PASS
+repair_loop,HumanEval/19,PASS,1,0,0,PASS
+repair_loop,HumanEval/20,PASS,1,0,0,PASS
+repair_loop,HumanEval/21,PASS,1,0,0,PASS
+repair_loop,HumanEval/22,PASS,1,0,0,PASS
+repair_loop,HumanEval/23,PASS,1,0,0,PASS
+repair_loop,HumanEval/24,PASS,1,0,0,PASS
+repair_loop,HumanEval/25,PASS,1,0,0,PASS
+repair_loop,HumanEval/26,PASS,1,0,0,PASS
+repair_loop,HumanEval/27,PASS,1,0,0,PASS
+repair_loop,HumanEval/28,PASS,1,0,0,PASS
+repair_loop,HumanEval/29,PASS,1,0,0,PASS
+repair_loop,HumanEval/30,PASS,1,0,0,PASS
+repair_loop,HumanEval/31,PASS,1,0,0,PASS
+repair_loop,HumanEval/32,PASS,1,0,0,PASS
+repair_loop,HumanEval/33,PASS,2,1,0,TEST_FAIL:AssertionError → PASS
+repair_loop,HumanEval/34,PASS,1,0,0,PASS
+repair_loop,HumanEval/35,PASS,1,0,0,PASS
+repair_loop,HumanEval/36,PASS,1,0,0,PASS
+repair_loop,HumanEval/37,EXEC_FAIL:NameError,20,1,19,TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/38,PASS,1,0,0,PASS
+repair_loop,HumanEval/39,PASS,1,0,0,PASS
+repair_loop,HumanEval/40,PASS,2,0,1,EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/41,EXEC_FAIL:NameError,20,0,20,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/42,PASS,1,0,0,PASS
+repair_loop,HumanEval/43,EXEC_FAIL:NameError,20,0,20,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/44,PASS,1,0,0,PASS
+repair_loop,HumanEval/45,PASS,1,0,0,PASS
+repair_loop,HumanEval/46,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/47,PASS,2,0,1,EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/48,PASS,1,0,0,PASS
+repair_loop,HumanEval/49,PASS,1,0,0,PASS
+repair_loop,HumanEval/50,PASS,1,0,0,PASS
+repair_loop,HumanEval/51,PASS,1,0,0,PASS
+repair_loop,HumanEval/52,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/53,PASS,1,0,0,PASS
+repair_loop,HumanEval/54,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/55,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/56,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/57,PASS,1,0,0,PASS
+repair_loop,HumanEval/58,PASS,1,0,0,PASS
+repair_loop,HumanEval/59,PASS,5,2,2,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → PASS
+repair_loop,HumanEval/60,PASS,1,0,0,PASS
+repair_loop,HumanEval/61,PASS,1,0,0,PASS
+repair_loop,HumanEval/62,EXEC_FAIL:NameError,20,0,20,EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/63,PASS,2,0,1,EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/64,EXEC_FAIL:NameError,20,0,20,EXEC_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/65,EXEC_FAIL:NameError,20,2,18,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/66,PASS,1,0,0,PASS
+repair_loop,HumanEval/67,PASS,1,0,0,PASS
+repair_loop,HumanEval/68,PASS,1,0,0,PASS
+repair_loop,HumanEval/69,PASS,1,0,0,PASS
+repair_loop,HumanEval/70,PASS,1,0,0,PASS
+repair_loop,HumanEval/71,PASS,1,0,0,PASS
+repair_loop,HumanEval/72,PASS,1,0,0,PASS
+repair_loop,HumanEval/73,PASS,1,0,0,PASS
+repair_loop,HumanEval/74,PASS,2,1,0,TEST_FAIL:AssertionError → PASS
+repair_loop,HumanEval/75,PASS,1,0,0,PASS
+repair_loop,HumanEval/76,EXEC_FAIL:SyntaxError,20,2,9,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError
+repair_loop,HumanEval/77,PASS,3,0,2,EXEC_FAIL:TypeError → EXEC_FAIL:NameError → PASS
+repair_loop,HumanEval/78,PASS,1,0,0,PASS
+repair_loop,HumanEval/79,PASS,1,0,0,PASS
+repair_loop,HumanEval/80,PASS,1,0,0,PASS
+repair_loop,HumanEval/81,PASS,1,0,0,PASS
+repair_loop,HumanEval/82,PASS,1,0,0,PASS
+repair_loop,HumanEval/83,PASS,5,1,1,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/84,PASS,1,0,0,PASS
+repair_loop,HumanEval/85,PASS,1,0,0,PASS
+repair_loop,HumanEval/86,PASS,1,0,0,PASS
+repair_loop,HumanEval/87,PASS,1,0,0,PASS
+repair_loop,HumanEval/88,PASS,1,0,0,PASS
+repair_loop,HumanEval/89,PASS,1,0,0,PASS
+repair_loop,HumanEval/90,PASS,1,0,0,PASS
+repair_loop,HumanEval/91,EXEC_FAIL:NameError,20,2,18,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/92,PASS,1,0,0,PASS
+repair_loop,HumanEval/93,EXEC_FAIL:NameError,20,1,16,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/94,PASS,1,0,0,PASS
+repair_loop,HumanEval/95,PASS,5,0,4,EXEC_FAIL:AttributeError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/96,PASS,1,0,0,PASS
+repair_loop,HumanEval/97,PASS,1,0,0,PASS
+repair_loop,HumanEval/98,PASS,1,0,0,PASS
+repair_loop,HumanEval/99,PASS,2,0,1,EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/100,PASS,1,0,0,PASS
+repair_loop,HumanEval/101,PASS,1,0,0,PASS
+repair_loop,HumanEval/102,PASS,1,0,0,PASS
+repair_loop,HumanEval/103,PASS,1,0,0,PASS
+repair_loop,HumanEval/104,PASS,1,0,0,PASS
+repair_loop,HumanEval/105,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/106,PASS,1,0,0,PASS
+repair_loop,HumanEval/107,PASS,1,0,0,PASS
+repair_loop,HumanEval/108,TEST_FAIL:AssertionError,20,8,1,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/109,PASS,1,0,0,PASS
+repair_loop,HumanEval/110,PASS,2,1,0,TEST_FAIL:AssertionError → PASS
+repair_loop,HumanEval/111,PASS,2,0,1,EXEC_FAIL:ValueError → PASS
+repair_loop,HumanEval/112,PASS,1,0,0,PASS
+repair_loop,HumanEval/113,PASS,1,0,0,PASS
+repair_loop,HumanEval/114,PASS,1,0,0,PASS
+repair_loop,HumanEval/115,EXEC_FAIL:NameError,20,1,6,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → TEST_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/116,PASS,1,0,0,PASS
+repair_loop,HumanEval/117,PASS,1,0,0,PASS
+repair_loop,HumanEval/118,PASS,1,0,0,PASS
+repair_loop,HumanEval/119,PASS,1,0,0,PASS
+repair_loop,HumanEval/120,TEST_FAIL:AssertionError,20,20,0,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/121,PASS,2,1,0,TEST_FAIL:AssertionError → PASS
+repair_loop,HumanEval/122,PASS,1,0,0,PASS
+repair_loop,HumanEval/123,PASS,1,0,0,PASS
+repair_loop,HumanEval/124,PASS,1,0,0,PASS
+repair_loop,HumanEval/125,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/126,PASS,14,2,11,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/127,TEST_FAIL:AssertionError,20,18,1,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/128,PASS,1,0,0,PASS
+repair_loop,HumanEval/129,EXEC_FAIL:NameError,20,2,15,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:IndentationError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:IndentationError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/130,EXEC_FAIL:NameError,20,1,16,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → TEST_FAIL:IndexError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/131,PASS,1,0,0,PASS
+repair_loop,HumanEval/132,TEST_FAIL:AssertionError,20,18,1,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/133,PASS,1,0,0,PASS
+repair_loop,HumanEval/134,TEST_FAIL:AssertionError,20,11,1,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/135,PASS,1,0,0,PASS
+repair_loop,HumanEval/136,PASS,1,0,0,PASS
+repair_loop,HumanEval/137,PASS,3,0,2,EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/138,PASS,1,0,0,PASS
+repair_loop,HumanEval/139,EXEC_FAIL:NameError,20,2,18,TEST_FAIL:NameError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/140,PASS,1,0,0,PASS
+repair_loop,HumanEval/141,EXEC_FAIL:NameError,20,1,19,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/142,PASS,1,0,0,PASS
+repair_loop,HumanEval/143,PASS,1,0,0,PASS
+repair_loop,HumanEval/144,PASS,1,0,0,PASS
+repair_loop,HumanEval/145,EXEC_FAIL:NameError,20,3,17,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/146,PASS,1,0,0,PASS
+repair_loop,HumanEval/147,PASS,3,1,1,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/148,PASS,1,0,0,PASS
+repair_loop,HumanEval/149,PASS,4,0,3,EXEC_FAIL:NameError → EXEC_FAIL:SyntaxError → EXEC_FAIL:NameError → PASS
+repair_loop,HumanEval/150,PASS,1,0,0,PASS
+repair_loop,HumanEval/151,PASS,1,0,0,PASS
+repair_loop,HumanEval/152,PASS,1,0,0,PASS
+repair_loop,HumanEval/153,TEST_FAIL:AssertionError,20,20,0,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError
+repair_loop,HumanEval/154,EXEC_FAIL:NameError,20,1,19,TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/155,PASS,1,0,0,PASS
+repair_loop,HumanEval/156,PASS,1,0,0,PASS
+repair_loop,HumanEval/157,PASS,1,0,0,PASS
+repair_loop,HumanEval/158,PASS,1,0,0,PASS
+repair_loop,HumanEval/159,EXEC_FAIL:NameError,20,1,19,TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError
+repair_loop,HumanEval/160,PASS,4,1,2,TEST_FAIL:AssertionError → EXEC_FAIL:SyntaxError → EXEC_FAIL:SyntaxError → PASS
+repair_loop,HumanEval/161,PASS,1,0,0,PASS
+repair_loop,HumanEval/162,PASS,1,0,0,PASS
+repair_loop,HumanEval/163,EXEC_FAIL:NameError,20,9,11,TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → TEST_FAIL:AssertionError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError → EXEC_FAIL:NameError

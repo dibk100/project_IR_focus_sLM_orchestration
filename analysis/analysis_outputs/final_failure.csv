@@ -1,0 +1,3 @@
+final_failure_family,count
+EXEC_FAIL,20
+TEST_FAIL,6
