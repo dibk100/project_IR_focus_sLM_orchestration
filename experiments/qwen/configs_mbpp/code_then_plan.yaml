@@ -10,7 +10,11 @@ dataset:
 
 model:
   name: "Qwen/Qwen2.5-Coder-7B-Instruct"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
   temperature: 0.2
+  
   planner:
     name: "Qwen/Qwen2.5-Coder-7B-Instruct"
     max_new_tokens: 256
@@ -30,9 +34,9 @@ output:
   dir: "results/qwen25coder7b/mbpp/code_then_plan"
 
 logging:
-  save_step_level: true
-  save_trajectory_level: true
-  save_problem_summary: true
+  save_step_level: false
+  save_trajectory_level: false
+  save_problem_summary: false
   save_run_analysis: false
   save_code: false
 

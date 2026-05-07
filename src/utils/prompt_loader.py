@@ -93,6 +93,9 @@ def build_replanner_prompt_for_sample(
 ):
     """
     이전 plan과 최근 실패 정보를 반영해 수정된 plan을 생성하도록 유도하는 replanner prompt.
+    mbpp : sample.problem_text
+    humeval : sample.prompt
+    bigcode : sample.instruct_prompt
     """
 
     previous_code_block = previous_code if previous_code else "(omitted)"

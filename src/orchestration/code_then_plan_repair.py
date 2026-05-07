@@ -31,7 +31,6 @@ import time
 from types import SimpleNamespace
 
 import yaml
-import torch
 
 from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
@@ -1109,8 +1108,6 @@ def run_code_then_plan_repair(config_path: str):
             trajectory_logs.append(trajectory_entry)
 
             # [FIX] del final_exec_result 추가 (code_then_plan.py와 동일하게 메모리 해제)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             del final_exec_result
             gc.collect()
 

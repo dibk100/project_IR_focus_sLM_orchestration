@@ -4,7 +4,7 @@ import os
 import sys
 import time
 import yaml
-import torch
+
 
 from src.models.hf_model_vllm import HFModel
 
@@ -359,9 +359,6 @@ def run_single_shot(config_path: str):
             print(f"  {pretty_status}")
 
             # OOM 방지
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
             del gen_result, step_entry, trajectory_entry
             del attempt_record, exec_result
             gc.collect()

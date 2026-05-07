@@ -9,6 +9,14 @@
 #
 # 서버 종료: Ctrl+C 또는 kill $(lsof -t -i:8000)
 # ─────────────────────────────────────────────
+# 서버 띄우기 전에 항상 기존 vLLM 프로세스가 있는지 확인하고 종료
+# pkill -f vllm
+
+# 확인용
+# lsof -i :8000
+
+# pkill -f python
+# pkill -f node
 
 # "microsoft/Phi-3.5-mini-instruct"
 # "meta-llama/Llama-3.1-8B-Instruct"
@@ -39,4 +47,5 @@ vllm serve "${MODEL}" \
     --port "${PORT}" \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
     --max-model-len 4096 \
-    --dtype auto
+    --dtype auto \
+    --gpu-memory-utilization 0.80

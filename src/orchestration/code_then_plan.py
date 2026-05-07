@@ -27,7 +27,6 @@ import time
 from types import SimpleNamespace
 
 import yaml
-import torch
 
 from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
@@ -851,8 +850,6 @@ def run_code_then_plan(config_path: str):
             if save_trajectory_level:
                 trajectory_logs.append(trajectory_entry)
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             del final_exec_result
             gc.collect()
 

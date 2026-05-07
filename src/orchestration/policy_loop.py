@@ -70,7 +70,6 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-import torch
 
 from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
@@ -1163,8 +1162,6 @@ def run_policy_loop(config_path: str):
         if save_trajectory_level:
             trajectory_logs.append(trajectory_entry)
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         gc.collect()
 
     # ── 5. 결과 요약 ──

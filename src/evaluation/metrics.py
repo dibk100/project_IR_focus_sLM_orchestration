@@ -1,32 +1,3 @@
-"""
-Phase 1 메트릭 계산
-
-- pass@1 (= overall pass rate)
-- execution success rate (= structural success)
-- conditional pass (= semantic success among executable samples)
-- gain vs single
-- MBPP failure breakdown (분석용)
-
-1) execution success rate
-   - 생성 코드가 '평가 가능한 상태'까지 갔는지, exec(code) 코드실행의 성공 비율
-   - structural quality를 반영
-
-2) pass@1
-   - 전체 문제 중 최종적으로 정답인 비율
-   - overall performance를 반영
-
-3) conditional pass
-   - 실행 가능한 코드들 중 실제 정답인 비율
-   - exec(code) 문제가 없는 것들 중 실제 정답인 비율
-   - semantic quality를 반영
-
-즉,
-- orchestration이 execution_success_rate를 올리면 구조 개선
-- orchestration이 conditional_pass를 올리면 의미 개선
-- pass@1은 전체 효과
-
-
-"""
 # src/evaluation/metrics.py
 from typing import Any, Dict, List, Optional, Union
 from collections import Counter

@@ -21,7 +21,6 @@ import time
 from types import SimpleNamespace
 
 import yaml
-import torch
 
 from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
@@ -550,8 +549,6 @@ def run_repair_loop(config_path: str):
 
             trajectory_logs.append(trajectory_entry)
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             gc.collect()
 
         summary = summarize_phase1_results(eval_results, k=max_calls)

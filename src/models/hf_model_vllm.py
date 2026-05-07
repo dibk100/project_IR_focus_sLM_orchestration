@@ -11,11 +11,9 @@ from typing import Any, Dict, Optional
 import torch
 from openai import OpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
 from src.models.base import BaseModel
-
 import httpx
-from openai import OpenAI
+
 
 
 class HFModel(BaseModel):
@@ -38,7 +36,19 @@ class HFModel(BaseModel):
         if self.backend == "vllm_server":
             if not api_base:
                 raise ValueError("api_base is required for vllm_server backend")
-            self.client = OpenAI(base_url=api_base, api_key=api_key,timeout=60.0,)
+            
+            timeout = httpx.Timeout(
+                connect=10.0,
+                read=120.0,
+                write=10.0,
+                pool=10.0,
+            )
+            self.client = OpenAI(
+                base_url=api_base,
+                api_key=api_key,
+                timeout=timeout,
+            )
+                        
             # HF 관련 속성은 사용하지 않음
             self.model = None
             self.tokenizer = None
@@ -77,20 +87,13 @@ class HFModel(BaseModel):
     def _generate_vllm(self, prompt: str, **kwargs) -> Dict[str, Any]:
         max_new_tokens = kwargs.get("max_new_tokens", self.max_new_tokens)
         temperature = kwargs.get("temperature", self.temperature)
-        timeout = httpx.Timeout(
-            connect=10.0,
-            read=120.0,   # ← 핵심
-            write=10.0,
-            pool=10.0
-        )
-        
+
         t0 = time.perf_counter()
         response = self.client.completions.create(
             model=self.model_name,
             prompt=prompt,
             max_tokens=max_new_tokens,
             temperature=temperature,
-            timeout=timeout,
         )
         # response = self.client.chat.completions.create(
         #     model=self.model_name,
