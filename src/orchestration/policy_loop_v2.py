@@ -801,17 +801,40 @@ def run_policy_loop(config_path: str):
 
         initial_prompt = adapter.build_initial_prompt(sample)
 
-        gen = _run_generate_step(
-            model=model,
-            adapter=adapter,
-            sample=sample,
-            method_name=method_name,
-            model_name=model_name,
-            prompt=initial_prompt,
-            max_new_tokens=max_new_tokens,
-            debug_mode=debug_mode,
-            attempt_idx=attempt_idx,
-        )
+        try:
+            gen = _run_generate_step(
+                model=model,
+                adapter=adapter,
+                sample=sample,
+                method_name=method_name,
+                model_name=model_name,
+                prompt=initial_prompt,
+                max_new_tokens=max_new_tokens,
+                debug_mode=debug_mode,
+                attempt_idx=attempt_idx,
+            )
+        except Exception as e:
+            print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 스킵: {e}")
+            eval_results.append(SimpleNamespace(
+                status="TOKEN_OVERFLOW", passed=False,
+                exec_ok=False, test_pass=False,
+                tests_passed=0, tests_total=0,
+                error_type="TokenOverflow", error_stage="generate",
+                num_calls=0,
+            ))
+            trajectory_logs.append({
+                "run_id": run_id, "dataset": dataset_name,
+                "problem_id": problem_id, "method": method_name,
+                "trajectory_id": trajectory_id,
+                "num_steps": 0, "call_count": 0,
+                "final_status": "TOKEN_OVERFLOW", "failure_family": "TOKEN_OVERFLOW",
+                "final_tests_passed": 0, "final_tests_total": 0,
+                "total_tokens": 0, "total_latency": 0,
+                "num_exec_fail": 0, "num_test_fail": 0,
+                "transition_path": ["TOKEN_OVERFLOW"],
+                "budget_used": {"tokens": 0, "calls": 0, "latency": 0},
+            })
+            continue
 
         # token tracking
         all_input_tokens.append(gen["input_tokens"])
@@ -923,22 +946,28 @@ def run_policy_loop(config_path: str):
 
                     plan_action_name = "plan" if planner_output is None else "replan"
 
-                    out = _run_plan_then_code_step(
-                        model=model,
-                        adapter=adapter,
-                        sample=sample,
-                        method_name=method_name,
-                        model_name=model_name,
-                        planner_max_tokens=planner_max_tokens,
-                        coder_max_tokens=coder_max_tokens,
-                        debug_mode=debug_mode,
-                        attempt_idx=attempt_idx,
-                        previous_plan=planner_output,
-                        failing_status=final_attempt_record.status,
-                        error_type=final_attempt_record.error_type,
-                        error_message=final_attempt_record.error_message,
-                        previous_code=previous_code,
-                    )
+                    try:
+                        out = _run_plan_then_code_step(
+                            model=model,
+                            adapter=adapter,
+                            sample=sample,
+                            method_name=method_name,
+                            model_name=model_name,
+                            planner_max_tokens=planner_max_tokens,
+                            coder_max_tokens=coder_max_tokens,
+                            debug_mode=debug_mode,
+                            attempt_idx=attempt_idx,
+                            previous_plan=planner_output,
+                            failing_status=final_attempt_record.status,
+                            error_type=final_attempt_record.error_type,
+                            error_message=final_attempt_record.error_message,
+                            previous_code=previous_code,
+                        )
+                    except Exception as e:
+                        print(f"  ⚠️ plan 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                        stop_reason = "token_overflow"
+                        transition_path.append("TOKEN_OVERFLOW")
+                        break
 
                     # token tracking: planner call
                     all_input_tokens.append(out["plan_input_tokens"])
@@ -1077,20 +1106,26 @@ def run_policy_loop(config_path: str):
                         print(f"  stop: 🛑 {stop_reason}")
                         break
 
-                    out = _run_repair_step(
-                        model=model,
-                        adapter=adapter,
-                        sample=sample,
-                        method_name=method_name,
-                        model_name=model_name,
-                        repair_max_tokens=repair_max_tokens,
-                        previous_code=previous_code,
-                        error_message=final_attempt_record.error_message,
-                        failing_status=final_attempt_record.status,
-                        planner_output=planner_output,
-                        debug_mode=debug_mode,
-                        attempt_idx=attempt_idx,
-                    )
+                    try:
+                        out = _run_repair_step(
+                            model=model,
+                            adapter=adapter,
+                            sample=sample,
+                            method_name=method_name,
+                            model_name=model_name,
+                            repair_max_tokens=repair_max_tokens,
+                            previous_code=previous_code,
+                            error_message=final_attempt_record.error_message,
+                            failing_status=final_attempt_record.status,
+                            planner_output=planner_output,
+                            debug_mode=debug_mode,
+                            attempt_idx=attempt_idx,
+                        )
+                    except Exception as e:
+                        print(f"  ⚠️ repair 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                        stop_reason = "token_overflow"
+                        transition_path.append("TOKEN_OVERFLOW")
+                        break
 
                     # token tracking: repair call
                     all_input_tokens.append(out["input_tokens"])

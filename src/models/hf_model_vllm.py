@@ -88,6 +88,15 @@ class HFModel(BaseModel):
         max_new_tokens = kwargs.get("max_new_tokens", self.max_new_tokens)
         temperature = kwargs.get("temperature", self.temperature)
 
+        # ✅ 토큰 수 사전 체크 (vLLM 서버 한계 - max_new_tokens 여유분)
+        MAX_PROMPT_TOKENS = 3000  # 모델 최대(3584) - 생성 여유분
+        prompt_len = len(prompt.split())  # 간이 추정 (정확도 필요시 tokenizer 사용)
+        if prompt_len > MAX_PROMPT_TOKENS:
+            # 앞부분 자르기 (최근 컨텍스트 유지)
+            words = prompt.split()
+            prompt = " ".join(words[-MAX_PROMPT_TOKENS:])
+            print(f"  ⚠️ 프롬프트 길이 초과, 앞부분 잘라냄 ({prompt_len} → {MAX_PROMPT_TOKENS} words)")
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -113,7 +122,13 @@ class HFModel(BaseModel):
                     "total_tokens": total_tokens,
                     "latency_sec":  latency,
                 }
+
+            # ✅ 토큰 초과는 재시도 없이 즉시 raise → repair.py에서 잡아서 스킵
             except Exception as e:
+                if "maximum context length" in str(e) or "400" in str(e):
+                    print(f"  ❌ 토큰 초과 오류, 재시도 없이 종료: {e}")
+                    raise
+
                 if attempt < max_retries - 1:
                     wait = 5 * (attempt + 1)
                     print(f"  ⚠️ vLLM API 오류 (시도 {attempt+1}/{max_retries}): {e}")

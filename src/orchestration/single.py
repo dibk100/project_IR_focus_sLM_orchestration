@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import yaml
+from types import SimpleNamespace
 
 
 from src.models.hf_model_vllm import HFModel
@@ -233,7 +234,50 @@ def run_single_shot(config_path: str):
 
             # 4-2. 모델 호출 + 시간 측정
             gen_start = time.perf_counter()
-            gen_result = model.generate(prompt)
+            try:
+                gen_result = model.generate(prompt)
+            except Exception as e:
+                gen_end = time.perf_counter()
+                print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 스킵: {e}")
+                # 빈 결과로 기록
+                step_entry = {
+                    "run_id": run_id, "dataset": dataset_name,
+                    "problem_id": problem_id, "method": method_name,
+                    "trajectory_id": trajectory_id,
+                    "step_id": 0, "call_index": 0, "candidate_id": 0,
+                    "stage": "generate", "is_retry": False, "is_repair": False, "is_planner": False,
+                    "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+                    "latency_sec": gen_end - gen_start,
+                    "code": None, "exec_ok": False, "test_pass": False,
+                    "status": "TOKEN_OVERFLOW", "error_type": "TokenOverflow",
+                    "error_stage": "generate", "error_message": str(e)[:500],
+                    "tests_passed": 0, "tests_total": 0,
+                    "code_length": 0, "selected": None, "selection_rank": None,
+                }
+                if hasattr(sample, "entry_point"):
+                    step_entry["entry_point"] = sample.entry_point
+                step_logs.append(step_entry)
+                trajectory_logs.append({
+                    "run_id": run_id, "dataset": dataset_name,
+                    "problem_id": problem_id, "method": method_name,
+                    "trajectory_id": trajectory_id,
+                    "num_steps": 1, "call_count": 1,
+                    "final_status": "TOKEN_OVERFLOW", "failure_family": "TOKEN_OVERFLOW",
+                    "final_tests_passed": 0, "final_tests_total": 0,
+                    "total_tokens": 0, "total_latency": gen_end - gen_start,
+                    "transition_path": ["TOKEN_OVERFLOW"],
+                    "budget_used": {"tokens": 0, "calls": 1, "latency": gen_end - gen_start},
+                })
+                gc.collect()
+                # eval_results에도 추가하여 요약 통계에 반영
+                eval_results.append(SimpleNamespace(
+                    status="TOKEN_OVERFLOW", passed=False,
+                    exec_ok=False, test_pass=False,
+                    tests_passed=0, tests_total=0,
+                    error_type="TokenOverflow", error_stage="generate",
+                    num_calls=0,
+                ))
+                continue
             gen_end = time.perf_counter()
             latency_sec = gen_end - gen_start
 

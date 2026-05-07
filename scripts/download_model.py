@@ -2,6 +2,7 @@ from huggingface_hub import snapshot_download
 
 models = [
     "codellama/CodeLlama-7b-Instruct-hf",
+    # "microsoft/Phi-3.5-mini-instruct"
     # "Qwen/Qwen2.5-Coder-14B-Instruct",
     # "meta-llama/Llama-3.1-8B-Instruct"
 ]

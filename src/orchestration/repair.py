@@ -304,7 +304,19 @@ def run_repair_loop(config_path: str):
                 is_repair = attempt_idx > 0
 
                 gen_start = time.perf_counter()
-                gen_result = model.generate(current_prompt)
+                try:
+                    gen_result = model.generate(current_prompt)
+                except Exception as e:
+                    gen_end = time.perf_counter()
+                    print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    if final_attempt_record is None:
+                        final_attempt_record = _make_empty_output_record(
+                            f"TokenOverflow: {str(e)[:300]}"
+                        )
+                        final_exec_result = final_attempt_record
+                    transition_path.append("TOKEN_OVERFLOW")
+                    cumulative_latency += gen_end - gen_start
+                    break
                 gen_end = time.perf_counter()
                 latency_sec = gen_end - gen_start
 

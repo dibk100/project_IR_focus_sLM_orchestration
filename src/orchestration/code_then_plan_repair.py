@@ -348,7 +348,33 @@ def run_code_then_plan_repair(config_path: str):
                 initial_prompt = adapter.build_initial_prompt(sample)
 
                 gen_start = time.perf_counter()
-                gen_result = model.generate(initial_prompt)
+                try:
+                    gen_result = model.generate(initial_prompt)
+                except Exception as e:
+                    gen_end = time.perf_counter()
+                    print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 스킵: {e}")
+                    eval_results.append(SimpleNamespace(
+                        status="TOKEN_OVERFLOW", passed=False,
+                        exec_ok=False, test_pass=False,
+                        tests_passed=0, tests_total=0,
+                        error_type="TokenOverflow", error_stage="generate",
+                        num_calls=0,
+                    ))
+                    trajectory_logs.append({
+                        "run_id": run_id, "dataset": dataset_name,
+                        "problem_id": problem_id, "method": method_name,
+                        "trajectory_id": trajectory_id,
+                        "num_steps": 0, "call_count": 0,
+                        "final_status": "TOKEN_OVERFLOW", "failure_family": "TOKEN_OVERFLOW",
+                        "final_tests_passed": 0, "final_tests_total": 0,
+                        "total_input_tokens": 0, "total_output_tokens": 0,
+                        "total_tokens": 0, "total_latency": gen_end - gen_start,
+                        "num_exec_fail": 0, "num_test_fail": 0,
+                        "transition_path": ["TOKEN_OVERFLOW"],
+                        "budget_used": {"tokens": 0, "calls": 0, "latency": gen_end - gen_start},
+                    })
+                    gc.collect()
+                    continue
                 gen_end = time.perf_counter()
                 latency_sec = gen_end - gen_start
 
@@ -558,6 +584,11 @@ def run_code_then_plan_repair(config_path: str):
                     plan_start = time.perf_counter()
                     plan_gen_result = model.generate(planner_prompt)
                     plan_end = time.perf_counter()
+                except Exception as e:
+                    model.max_new_tokens = orig_tokens
+                    print(f"  ⚠️ plan 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    transition_path.append("TOKEN_OVERFLOW")
+                    break
                 finally:
                     model.max_new_tokens = orig_tokens
 
@@ -629,6 +660,11 @@ def run_code_then_plan_repair(config_path: str):
                     code_start = time.perf_counter()
                     code_gen_result = model.generate(coder_prompt)
                     code_end = time.perf_counter()
+                except Exception as e:
+                    model.max_new_tokens = orig_tokens
+                    print(f"  ⚠️ plan_code 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    transition_path.append("TOKEN_OVERFLOW")
+                    break
                 finally:
                     model.max_new_tokens = orig_tokens
 
@@ -841,6 +877,11 @@ def run_code_then_plan_repair(config_path: str):
                     repair_start = time.perf_counter()
                     repair_gen_result = model.generate(repair_prompt)
                     repair_end = time.perf_counter()
+                except Exception as e:
+                    model.max_new_tokens = orig_tokens
+                    print(f"  ⚠️ repair 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    transition_path.append("TOKEN_OVERFLOW")
+                    break
                 finally:
                     model.max_new_tokens = orig_tokens
 
