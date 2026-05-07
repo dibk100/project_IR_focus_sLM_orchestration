@@ -55,7 +55,7 @@ DATASET_REGISTRY = {
     },
     "bigcode": {
         "hf_name": "bigcode/bigcodebench",
-        "split": "v0.1.0_hf",
+        "split": "v0.1.4",
         "save_name": "bigcode.jsonl",
     },
     "livecodebench": {

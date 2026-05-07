@@ -34,3 +34,34 @@ plan과 repair를 selective하게 사용
 planning 사용률 감소 (29.3% → 20.1%)
 repair 성공률 크게 개선 (10.0% → 54.5%)
 전체 step 수도 가장 효율적(393건)
+
+
+
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 153
+  실행 성공: 163
+  success@20: 0.9329
+  execution_success_rate: 0.9939
+  conditional_success: 0.9387
+  AUSC: 0.8152
+============================================================
+  code_failed: 1
+  define_test_failed: 0
+  run_test_failed: 10
+============================================================
+  input_tokens min/avg/max: 37 / 416.7 / 1592
+  output_tokens min/avg/max: 1 / 157.0 / 512
+============================================================
+  [problem-level] plan 사용: 96/164 (58.5%)
+  [problem-level] plan 복구 성공: 84/96 (87.5%)
+  [problem-level] repair 사용: 109/164 (66.5%)
+  [problem-level] repair 복구 성공: 40/109 (36.7%)
+  [call-level] plan 호출 누적: 191, 성공: 84/191 (44.0%)
+  [call-level] repair 호출 누적: 197, 성공: 40/197 (20.3%)
+============================================================
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v2/summary.json
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v2/step_logs.jsonl (743건)
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v2/trajectory_logs.jsonl (164건)
+✅ policy_loop 완료

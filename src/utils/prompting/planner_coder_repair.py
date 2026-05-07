@@ -3,8 +3,9 @@ Planner-Coder-Repair 전용 Prompt Builder
 
 기존 repair prompt와의 차이:
 - plan context (planner의 출력)를 함께 포함
-- repairer가 원래 plan에 따라 코드를 수정하도록 유도
+- repairer가 원래 plan을 참고하되, plan이 틀렸다면 수정할 수 있도록 유도
 """
+
 from src.tasks.humaneval import HumanEvalSample
 from src.tasks.mbpp import MBPPSample
 
@@ -15,30 +16,31 @@ def build_humaneval_repair_with_plan_prompt(
     previous_code: str,
     error_message: str,
 ) -> str:
-    """
-    HumanEval용 repair prompt (plan 포함).
-    이전 코드와 에러 메시지, 그리고 원래 plan을 함께 제공.
-    """
-    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
+    return f"""You are given a Python function task, a plan, a previous incorrect solution, and its execution error.
 
 Your job is to repair the solution so that it passes the tests.
 
 Requirements:
 - Return only Python code.
 - Do not include markdown fences.
+- Do not include explanations.
 - Keep the same function name and signature.
 - Provide a complete corrected function.
+- Use the plan as guidance, but fix the plan if it conflicts with the task or the error.
 
-[Task Prompt]
-{sample.prompt}
+Task Prompt:
+{sample.input}
 
-[Previous Solution]
+Plan:
+{planner_output}
+
+Previous Solution:
 {previous_code}
 
-[Error Message]
+Error Message:
 {error_message}
 
-[Corrected Solution]
+Corrected Solution:
 """
 
 
@@ -48,33 +50,32 @@ def build_mbpp_repair_with_plan_prompt(
     previous_code: str,
     error_message: str,
 ) -> str:
-    """
-    MBPP용 repair prompt (plan 포함).
-    이전 코드와 에러 메시지 제공.
-    """
-    test_hint = sample.test_list[0] if sample.test_list else ""
-
-    return f"""You are given a Python function task, a previous incorrect solution, and its execution error.
+    return f"""You are given a Python function task, a plan, a previous incorrect solution, and its execution error.
 
 Your job is to repair the solution so that it passes the tests.
 
 Requirements:
 - Return only Python code.
 - Do not include markdown fences.
-- Keep the same function name and signature.
+- Do not include explanations.
+- Keep the exact function name and signature implied by the test hint.
 - Provide a complete corrected function.
+- Use the plan as guidance, but fix the plan if it conflicts with the task, the test hint, or the error.
 
-[Task Prompt]
-{sample.problem_text}
+Task Prompt:
+{sample.input}
 
-[Test hint]
-{test_hint}
+Test hint:
+{sample.hint}
 
-[Previous Solution]
+Plan:
+{planner_output}
+
+Previous Solution:
 {previous_code}
 
-[Error Message]
+Error Message:
 {error_message}
 
-[Corrected Solution]
+Corrected Solution:
 """

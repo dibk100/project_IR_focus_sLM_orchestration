@@ -43,9 +43,9 @@ output:
   dir: "results/qwen25coder7b/mbpp/proposed_v2"
 
 logging:
-  save_step_level: false              # 각 step별 행동 기록
-  save_trajectory_level: false        # 전체 시도 과정
-  save_problem_summary: false     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
+  save_step_level: true              # 각 step별 행동 기록
+  save_trajectory_level: true        # 전체 시도 과정
+  save_problem_summary: true     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
   save_run_analysis: false
   save_code: false          # 생성 코드 저장 여부
   failure_examples: false   # 실패 예제 저장 여부

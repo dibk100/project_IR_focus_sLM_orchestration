@@ -34,9 +34,9 @@ output:
   dir: "results/qwen25coder7b/mbpp/code_then_plan"
 
 logging:
-  save_step_level: false
-  save_trajectory_level: false
-  save_problem_summary: false
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
   save_run_analysis: false
   save_code: false
 

@@ -1,8 +1,8 @@
 # src/adapters/mbpp.py
+
 """
 MBPP adapter
 """
-from typing import Any, Dict
 
 from src.adapters.base import BaseAdapter
 from src.tasks.mbpp import MBPPSample
@@ -20,14 +20,14 @@ class MBPPAdapter(BaseAdapter):
 
     def build_initial_prompt(self, sample: MBPPSample) -> str:
         return build_mbpp_prompt(sample)
-    
+
     def build_repair_prompt(self, sample, previous_code, error_message):
         return build_mbpp_repair_prompt(
             sample=sample,
             previous_code=previous_code,
             error_message=error_message,
         )
-        
+
     def build_refinement_prompt(
         self,
         sample,

@@ -11,9 +11,10 @@ from .base import BaseTask
 @dataclass
 class HumanEvalSample:
     task_id: str
-    prompt: str
-    entry_point: str
+    input: str
     test: str
+    hint: str = ""
+    entry_point: str = ""
     canonical_solution: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -39,9 +40,10 @@ class HumanEvalTask(BaseTask[HumanEvalSample]):
                 self.samples.append(
                     HumanEvalSample(
                         task_id=raw["task_id"],
-                        prompt=raw["prompt"],
-                        entry_point=raw["entry_point"],
+                        input=raw["prompt"].strip(),
                         test=raw["test"],
+                        hint="",
+                        entry_point=raw["entry_point"],
                         canonical_solution=raw.get("canonical_solution"),
                         metadata={"dataset": "humaneval"},
                     )

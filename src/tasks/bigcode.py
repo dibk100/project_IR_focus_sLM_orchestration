@@ -2,8 +2,8 @@
 
 import os
 import json
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
+from typing import List
 
 from .base import BaseTask
 
@@ -11,10 +11,15 @@ from .base import BaseTask
 @dataclass
 class BigCodeSample:
     task_id: str
-    instruct_prompt: str
-    entry_point: str
+    input: str
     test: str
-    canonical_solution: str
+    hint: str = ""
+    entry_point: str = ""
+    canonical_solution: str = ""
+
+    @property
+    def instruct_prompt(self) -> str:
+        return self.input
 
 
 class BigCodeTask(BaseTask[BigCodeSample]):
@@ -35,13 +40,15 @@ class BigCodeTask(BaseTask[BigCodeSample]):
         with open(self.data_path, "r", encoding="utf-8") as f:
             for line in f:
                 raw = json.loads(line.strip())
+
                 self.samples.append(
                     BigCodeSample(
                         task_id=raw["task_id"],
-                        instruct_prompt=raw["instruct_prompt"],
-                        entry_point=raw["entry_point"],
+                        input=raw["instruct_prompt"].strip(),
                         test=raw["test"],
-                        canonical_solution=raw["canonical_solution"],
+                        hint="",
+                        entry_point=raw["entry_point"],
+                        canonical_solution=raw.get("canonical_solution", ""),
                     )
                 )
 
@@ -61,4 +68,4 @@ class BigCodeTask(BaseTask[BigCodeSample]):
         return len(self.samples)
 
     def __repr__(self) -> str:
-        return f"BigCodeTask(samples={len(self.samples)}))"
+        return f"BigCodeTask(samples={len(self.samples)})"
