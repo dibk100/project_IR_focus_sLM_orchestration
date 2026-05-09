@@ -88,28 +88,31 @@ planning+repair
 💾 결과 저장: results/qwen25coder7b/mbpp/code_then_plan_repair/failure_examples.json
 📝 failure_examples: 11개 유형 저장됨
 
-Proposed v1
+
 ============================================================
 📊 결과 요약
   총 문제: 257
   성공: 221
-  실행 성공: 250
+  실행 성공: 253
   success@20: 0.8599
-  execution_success_rate: 0.9728
-  conditional_success: 0.8840
-  AUSC: 0.7765
+  execution_success_rate: 0.9844
+  conditional_success: 0.8735
+  AUSC: 0.7794
 ============================================================
-  code_failed: 7
+  code_failed: 4
   define_test_failed: 0
-  run_test_failed: 29
+  run_test_failed: 32
 ============================================================
-  [problem-level] plan 사용: 0/0
-  [problem-level] plan 복구 성공: 0/0
-  [problem-level] repair 사용: 0/0
-  [problem-level] repair 복구 성공: 0/0
-  [call-level] planning-cycle 사용: 0 cycles (0 calls), 성공: 0/0
-  [call-level] repair 호출: 0, 성공: 0/0
+  [problem-level] plan 사용: 123/257 (47.9%)
+  [problem-level] plan 복구 성공: 86/123 (69.9%)
+  [problem-level] repair 사용: 99/257 (38.5%)
+  [problem-level] repair 복구 성공: 3/99 (3.0%)
+  [call-level] planning-cycle 사용: 290 cycles (580 calls), 성공: 86/290 (29.7%)
+  [call-level] repair 호출: 290, 성공: 3/290 (1.0%)
 ============================================================
+💾 결과 저장: results/qwen25coder7b/mbpp/proposed_v1/summary.json
+💾 결과 저장: results/qwen25coder7b/mbpp/proposed_v1/step_logs.jsonl (1127건)
+💾 결과 저장: results/qwen25coder7b/mbpp/proposed_v1/trajectory_logs.jsonl (257건)
 ✅ policy_loop 완료
 
 Proposed v2

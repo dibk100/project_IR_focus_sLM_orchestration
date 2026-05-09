@@ -39,7 +39,28 @@ repair 다시
 💾 결과 저장: results/phi35mini/humaneval/repair/trajectory_logs.jsonl (164건)
 💾 결과 저장: results/phi35mini/humaneval/repair/summary.json
 💾 결과 저장: results/phi35mini/humaneval/repair/failure_examples.json
-📝 failure_examples: 4개 유형 저장됨
+📝 failure_examples: 2개 유형 저장됨
+
+
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 118
+  실행 성공: 147
+  success@20: 0.7195
+  execution_success_rate: 0.8963
+  conditional_success: 0.8027
+  AUSC: 0.6055
+============================================================
+  code_failed: 0
+  define_test_failed: 0
+  run_test_failed: 0
+============================================================
+  plan 사용: 0/0
+  plan 복구 성공: 0/0
+============================================================
+💾 결과 저장: results/phi35mini/humaneval/code_then_plan/failure_examples.json
+📝 failure_examples: 8개 유형 저장됨
 
 
 code_then_plan_repair
@@ -70,3 +91,31 @@ code_then_plan_repair
 💾 결과 저장: results/phi35mini/humaneval/code_then_plan_repair/summary.json
 💾 결과 저장: results/phi35mini/humaneval/code_then_plan_repair/failure_examples.json
 📝 failure_examples: 10개 유형 저장됨
+
+proposed-v1
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 126
+  실행 성공: 150
+  success@20: 0.7683
+  execution_success_rate: 0.9146
+  conditional_success: 0.8400
+  AUSC: 0.6466
+============================================================
+  code_failed: 14
+  define_test_failed: 0
+  run_test_failed: 24
+============================================================
+  [problem-level] plan 사용: 114/164 (69.5%)
+  [problem-level] plan 복구 성공: 76/114 (66.7%)
+  [problem-level] repair 사용: 159/164 (97.0%)
+  [problem-level] repair 복구 성공: 45/159 (28.3%)
+  [call-level] planning-cycle 사용: 289 cycles (578 calls), 성공: 76/289 (26.3%)
+  [call-level] repair 호출: 363, 성공: 45/363 (12.4%)
+============================================================
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/summary.json
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/step_logs.jsonl (1105건)
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/trajectory_logs.jsonl (164건)
+✅ policy_loop 완료
+

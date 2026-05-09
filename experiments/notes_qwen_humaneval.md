@@ -49,3 +49,57 @@ Proposed v2는 recovery success는 크게 증가했지만:
 AUSC는 크게 감소 (0.9064 → 0.8152)
 
 이는 더 많은 orchestration이 항상 더 좋은 budget-efficiency로 이어지지 않음을 시사함.
+
+
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 152
+  실행 성공: 162
+  success@20: 0.9268
+  execution_success_rate: 0.9878
+  conditional_success: 0.9383
+  AUSC: 0.8006
+============================================================
+  code_failed: 2
+  define_test_failed: 0
+  run_test_failed: 10
+============================================================
+  [problem-level] plan 사용: 88/164 (53.7%)
+  [problem-level] plan 복구 성공: 76/88 (86.4%)
+  [problem-level] repair 사용: 133/164 (81.1%)
+  [problem-level] repair 복구 성공: 45/133 (33.8%)
+  [call-level] planning-cycle 사용: 187 cycles (374 calls), 성공: 76/187 (40.6%)
+  [call-level] repair 호출: 247, 성공: 45/247 (18.2%)
+============================================================
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3/summary.json
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3/step_logs.jsonl (785건)
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3/trajectory_logs.jsonl (164건)
+✅ policy_loop 완료
+
+
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 149
+  실행 성공: 156
+  success@20: 0.9085
+  execution_success_rate: 0.9512
+  conditional_success: 0.9551
+  AUSC: 0.8003
+============================================================
+  code_failed: 8
+  define_test_failed: 0
+  run_test_failed: 7
+============================================================
+  [problem-level] plan 사용: 89/164 (54.3%)
+  [problem-level] plan 복구 성공: 74/89 (83.1%)
+  [problem-level] repair 사용: 133/164 (81.1%)
+  [problem-level] repair 복구 성공: 44/133 (33.1%)
+  [call-level] planning-cycle 사용: 130 cycles (260 calls), 성공: 74/130 (56.9%)
+  [call-level] repair 호출: 239, 성공: 44/239 (18.4%)
+============================================================
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3_2/summary.json
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3_2/step_logs.jsonl (663건)
+💾 결과 저장: results/qwen25coder7b/humaneval/proposed_v3_2/trajectory_logs.jsonl (164건)
+✅ policy_loop 완료

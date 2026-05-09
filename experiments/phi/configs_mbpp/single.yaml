@@ -6,10 +6,12 @@ run:
 
 dataset:
   name: "mbpp"
-  num_samples: 374
+  num_samples: 257
 
 model:
   name: "microsoft/Phi-3.5-mini-instruct"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
   max_new_tokens: 512
   temperature: 0.2
 
@@ -20,13 +22,13 @@ budget:
   max_calls: 1
 
 output:
-  dir: "results/phi/mbpp/single"
+  dir: "results/phi35mini/mbpp/single"
 
 logging:
   save_step_level: true
   save_trajectory_level: true
   save_problem_summary: true
-  save_run_analysis: true
+  save_run_analysis: false
   save_code: false
 
 debug : 

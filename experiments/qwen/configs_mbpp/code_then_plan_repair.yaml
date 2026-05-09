@@ -38,9 +38,9 @@ output:
   dir: "results/qwen25coder7b/mbpp/code_then_plan_repair"
 
 logging:
-  save_step_level: false          # 필수 (stage별 토큰 확인)
-  save_trajectory_level: false
-  save_problem_summary: false
+  save_step_level: true          # 필수 (stage별 토큰 확인)
+  save_trajectory_level: true    # 필수 (문제별 trajectory 확인)
+  save_problem_summary: true     # 필수 (문제별 요약 정보 확인)
   save_run_analysis: false
   save_code: false
 

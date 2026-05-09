@@ -21,7 +21,7 @@
 # "microsoft/Phi-3.5-mini-instruct"
 # "meta-llama/Llama-3.1-8B-Instruct"
 # Qwen/Qwen2.5-Coder-7B-Instruct
-MODEL="${MODEL:-microsoft/Phi-3.5-mini-instruct}"
+MODEL="${MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}"
 PORT="${1:-8000}"
 GPU_MEMORY_UTILIZATION="${GPU_UTIL:-0.90}"
 

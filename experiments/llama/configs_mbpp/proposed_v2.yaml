@@ -7,7 +7,7 @@ run:
 
 dataset:
   name: "mbpp"
-  num_samples: 374
+  num_samples: 257
 
 model:
   name: "meta-llama/Llama-3.1-8B-Instruct"
@@ -41,7 +41,7 @@ policy:
   stagnation_threshold: 2
 
 output:
-  dir: "results/llama/mbpp/proposed_v2"
+  dir: "results/llama318b/mbpp/proposed_v2"
 
 logging:
   save_step_level: true              # 각 step별 행동 기록

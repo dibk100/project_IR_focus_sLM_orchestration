@@ -43,7 +43,6 @@ Table X summarizes representative refinement trajectory patterns observed across
 | Planning-Repair | `TEST_FAIL:AssertionError → PLAN_DONE → EXEC_FAIL:NameError → ...`      |     1 |    20 | Failure | Sequential refinement occasionally introduces mixed semantic-executable failure oscillations.           |
 
 # stagnation_summary
-“반복 실패(stagnation)가 얼마나 발생했는가”
 
 | Strategy        | TEST stagnation ≥3 | EXEC stagnation ≥3 | TEST stagnation ≥5 | EXEC stagnation ≥5 | Interpretation                                                                                              |
 | --------------- | -----------------: | -----------------: | -----------------: | -----------------: | ----------------------------------------------------------------------------------------------------------- |

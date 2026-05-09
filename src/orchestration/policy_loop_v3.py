@@ -302,6 +302,172 @@ def plan_available(history: List[StepRecord], policy_cfg: Dict[str, Any]) -> boo
     return num_plan_calls(history) < max_plan_calls
 
 
+# Failure-transition aware policy helpers
+LOCAL_EXEC_ERRORS = {
+    "SyntaxError",
+    "IndentationError",
+    "TabError",
+    "NameError",
+    "UnboundLocalError",
+}
+
+HARD_EXEC_ERRORS = {
+    "TimeoutError",
+    "RecursionError",
+    "MemoryError",
+}
+
+def planning_cycle_available(
+    history: List[StepRecord],
+    policy_cfg: Dict[str, Any],
+    call_count: int,
+    max_calls: int,
+) -> Tuple[bool, Optional[str]]:
+    """Planning costs two model calls: planner + coder."""
+    if call_count + 2 > max_calls:
+        return False, "max_calls_reached_before_plan_cycle"
+    if not plan_available(history, policy_cfg):
+        return False, "plan_budget_exhausted"
+    return True, None
+
+
+def previous_failure(history: List[StepRecord]) -> Tuple[str, str]:
+    if len(history) < 2:
+        return ("NONE", "NONE")
+    prev = history[-2]
+    return prev.fail, prev.error_type
+
+
+def is_test_to_exec_collapse(history: List[StepRecord]) -> bool:
+    """Repair-induced collapse: TEST_FAIL -> EXEC_FAIL."""
+    if len(history) < 2:
+        return False
+    prev = history[-2]
+    cur = history[-1]
+    return prev.fail == "TEST_FAIL" and cur.fail == "EXEC_FAIL"
+
+
+def last_plan_failure_run_length(history: List[StepRecord]) -> int:
+    """How many consecutive failures were produced by planning."""
+    cnt = 0
+    for step in reversed(history):
+        if step.action == "plan" and step.fail != "PASS":
+            cnt += 1
+        elif step.fail == "PASS":
+            break
+        else:
+            break
+    return cnt
+
+
+def repairs_since_last_plan_or_generate(history: List[StepRecord]) -> int:
+    cnt = 0
+    for step in reversed(history):
+        if step.action == "repair":
+            cnt += 1
+        elif step.action in {"plan", "generate"}:
+            break
+    return cnt
+
+
+def choose_next_policy_action(
+    *,
+    history: List[StepRecord],
+    current_fail: str,
+    current_error: str,
+    call_count: int,
+    max_calls: int,
+    policy_cfg: Dict[str, Any],
+) -> Tuple[str, Optional[str]]:
+    """
+    Return one of: ("repair", None), ("plan", None), ("stop", reason).
+
+    Empirical motivation:
+    - Repair is useful for local executable failures and first semantic mismatches.
+    - Repeated TEST/EXEC failures and TEST->EXEC collapse should escalate to planning.
+    - Planning is expensive, so the policy stops when planning is required but unavailable.
+    """
+    if current_fail == "PASS":
+        return "stop", "already_passed"
+
+    if call_count >= max_calls:
+        return "stop", "max_calls_reached"
+
+    stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
+    exec_stagnation_threshold = policy_cfg.get(
+        "exec_stagnation_threshold",
+        stagnation_threshold,
+    )
+    test_stagnation_threshold = policy_cfg.get(
+        "test_stagnation_threshold",
+        stagnation_threshold,
+    )
+    max_repairs_per_cycle = policy_cfg.get("max_repair_steps", 3)
+    max_repairs_after_plan = policy_cfg.get("max_repairs_after_plan", 1)
+    max_consecutive_plan_failures = policy_cfg.get("max_consecutive_plan_failures", 2)
+
+    same_sig = same_signature_run_length(history)
+    same_family = same_fail_family_run_length(history)
+    last_action = history[-1].action if history else "NONE"
+
+    def require_plan() -> Tuple[str, Optional[str]]:
+        ok, reason = planning_cycle_available(history, policy_cfg, call_count, max_calls)
+        if ok:
+            return "plan", None
+        return "stop", reason
+
+    # Rule 1. Repair-induced collapse: semantic failure became executable failure.
+    # This is a strong signal that local repair is destabilizing the code.
+    if is_test_to_exec_collapse(history):
+        return require_plan()
+
+    # Rule 2. Repeated failures should escape the current basin through planning.
+    if current_fail == "TEST_FAIL" and (
+        same_sig >= test_stagnation_threshold or same_family >= test_stagnation_threshold + 1
+    ):
+        return require_plan()
+
+    if current_fail == "EXEC_FAIL" and (
+        same_sig >= exec_stagnation_threshold or same_family >= exec_stagnation_threshold + 1
+    ):
+        return require_plan()
+
+    # Rule 3. Avoid repeated planning loops. If planning repeatedly fails, stop rather
+    # than spending the remaining budget on low-yield re-planning.
+    if last_action == "plan" and last_plan_failure_run_length(history) >= max_consecutive_plan_failures:
+        return "stop", "repeated_plan_failure"
+
+    # Rule 4. Local executable failures are repaired first.
+    if current_fail == "EXEC_FAIL":
+        if current_error in HARD_EXEC_ERRORS:
+            return require_plan()
+
+        if repairs_since_last_plan_or_generate(history) >= max_repairs_per_cycle:
+            return require_plan()
+
+        if current_error in LOCAL_EXEC_ERRORS:
+            return "repair", None
+
+        # Unknown executable failures get one repair attempt, then planning if repeated.
+        return "repair", None
+
+    # Rule 5. Semantic failures get one local repair attempt, but do not loop.
+    if current_fail == "TEST_FAIL":
+        if last_action == "plan":
+            if repairs_since_last_plan_or_generate(history) >= max_repairs_after_plan:
+                return require_plan()
+            return "repair", None
+
+        if repairs_since_last_plan_or_generate(history) >= max_repairs_per_cycle:
+            return require_plan()
+
+        return "repair", None
+
+    # CODE_FAIL / empty output / unknown extraction failures are usually not worth
+    # repeated local repair; prefer planning if available.
+    return require_plan()
+
+
 # ============================================================
 # Step runners
 # ============================================================
@@ -888,17 +1054,21 @@ def run_policy_loop(config_path: str):
                 next_action = forced_next_action
                 forced_next_action = None
 
-                if next_action != "plan":
-                    if (
-                        not plan_available(history, policy_cfg)
-                        and current_fail == "TEST_FAIL"
-                        and current_error == "AssertionError"
-                    ):
-                        stop_reason = "plan_budget_exhausted"
+                if next_action is None:
+                    next_action, maybe_stop_reason = choose_next_policy_action(
+                        history=history,
+                        current_fail=current_fail,
+                        current_error=current_error,
+                        call_count=call_count,
+                        max_calls=max_calls,
+                        policy_cfg=policy_cfg,
+                    )
+                    if next_action == "stop":
+                        stop_reason = maybe_stop_reason
                         print(f"  stop: 🛑 {stop_reason}")
                         break
 
-                if next_action == "plan" or (current_fail == "TEST_FAIL" and current_error == "AssertionError"):
+                if next_action == "plan":
                     # plan은 planner 1 call + plan_code 1 call = 2 calls 필요
                     if call_count + 2 > max_calls:
                         stop_reason = "max_calls_reached_before_plan_cycle"
@@ -1047,7 +1217,22 @@ def run_policy_loop(config_path: str):
                         recovered_by = "plan_code"
                         break
 
-                    if current_fail == "TEST_FAIL" and current_error == "AssertionError":
+                    # Re-evaluate after a failed planning cycle. This prevents
+                    # AssertionError from triggering unconditional re-planning and
+                    # lets the transition-aware policy decide repair / plan / stop.
+                    next_action, maybe_stop_reason = choose_next_policy_action(
+                        history=history,
+                        current_fail=current_fail,
+                        current_error=current_error,
+                        call_count=call_count,
+                        max_calls=max_calls,
+                        policy_cfg=policy_cfg,
+                    )
+                    if next_action == "stop":
+                        stop_reason = maybe_stop_reason
+                        print(f"  stop: 🛑 {stop_reason}")
+                        break
+                    if next_action == "plan":
                         forced_next_action = "plan"
                         continue
 
@@ -1151,33 +1336,41 @@ def run_policy_loop(config_path: str):
                         recovered_by = "repair"
                         break
 
-                    if current_fail == "TEST_FAIL":
-                        if same_signature_run_length(history) >= stagnation_threshold:
-                            if plan_available(history, policy_cfg):
-                                forced_next_action = "plan"
-                                break
-                            stop_reason = "plan_budget_exhausted"
-                            print(f"  stop: 🛑 {stop_reason}")
-                            break
-
-                    if current_fail == "EXEC_FAIL" and same_signature_run_length(history) >= stagnation_threshold:
-                        if plan_available(history, policy_cfg):
-                            forced_next_action = "plan"
-                            break
-                        stop_reason = "plan_budget_exhausted"
+                    next_action, maybe_stop_reason = choose_next_policy_action(
+                        history=history,
+                        current_fail=current_fail,
+                        current_error=current_error,
+                        call_count=call_count,
+                        max_calls=max_calls,
+                        policy_cfg=policy_cfg,
+                    )
+                    if next_action == "stop":
+                        stop_reason = maybe_stop_reason
                         print(f"  stop: 🛑 {stop_reason}")
                         break
+                    if next_action == "plan":
+                        forced_next_action = "plan"
+                        break
+                    # Otherwise keep repairing within max_repair_steps.
 
                 if stop_reason is not None or final_attempt_record.passed:
                     break
 
-                if same_signature_run_length(history) >= stagnation_threshold:
-                    if plan_available(history, policy_cfg):
-                        forced_next_action = "plan"
-                        continue
-                    stop_reason = "plan_budget_exhausted"
+                next_action, maybe_stop_reason = choose_next_policy_action(
+                    history=history,
+                    current_fail=current_fail,
+                    current_error=current_error,
+                    call_count=call_count,
+                    max_calls=max_calls,
+                    policy_cfg=policy_cfg,
+                )
+                if next_action == "stop":
+                    stop_reason = maybe_stop_reason
                     print(f"  stop: 🛑 {stop_reason}")
                     break
+                if next_action == "plan":
+                    forced_next_action = "plan"
+                    continue
 
                 continue
 

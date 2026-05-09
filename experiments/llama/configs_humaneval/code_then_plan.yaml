@@ -11,7 +11,11 @@ dataset:
 
 model:
   name: "meta-llama/Llama-3.1-8B-Instruct"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
   temperature: 0.2
+  
   planner:
     name: "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: 256
@@ -31,8 +35,8 @@ output:
   dir: "results/llama318b/humaneval/code_then_plan"
 
 logging:
-  save_step_level: true
-  save_trajectory_level: true
+  save_step_level: false
+  save_trajectory_level: false
   save_problem_summary: true
   save_run_analysis: false
   save_code: false
