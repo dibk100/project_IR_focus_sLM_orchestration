@@ -20,23 +20,25 @@ single
 💾 결과 저장: results/qwen25coder7b/mbpp/single/summary.json
 💾 결과 저장: results/qwen25coder7b/mbpp/single/analysis.json
 
-repair
 ============================================================
 📊 결과 요약
   총 문제: 257
-  성공: 213
-  실행 성공: 256
-  success@20: 0.8288
-  execution_success_rate: 0.9961
-  conditional_success: 0.8320
-  AUSC: 0.8088
+  성공: 214
+  실행 성공: 257
+  success@20: 0.8327
+  execution_success_rate: 1.0000
+  conditional_success: 0.8327
+  AUSC: 0.8136
 ============================================================
-  code_failed: 1
+  code_failed: 0
   define_test_failed: 0
   run_test_failed: 43
 ============================================================
+💾 결과 저장: results/qwen25coder7b/mbpp/repair/step_logs.jsonl (1172건)
+💾 결과 저장: results/qwen25coder7b/mbpp/repair/trajectory_logs.jsonl (257건)
+💾 결과 저장: results/qwen25coder7b/mbpp/repair/summary.json
 💾 결과 저장: results/qwen25coder7b/mbpp/repair/failure_examples.json
-📝 failure_examples: 8개 유형 저장됨
+📝 failure_examples: 10개 유형 저장됨
 
 planning
 ============================================================
@@ -63,31 +65,33 @@ planning
 📝 failure_examples: 13개 유형 저장됨
 
 planning+repair
-============================================================
+=============================================================
 📊 결과 요약
   총 문제: 257
-  성공: 214
-  실행 성공: 216
-  success@20: 0.8327
-  execution_success_rate: 0.8405
-  conditional_success: 0.9907
-  AUSC: 0.7852
+  성공: 216
+  실행 성공: 218
+  success@20: 0.8405
+  execution_success_rate: 0.8482
+  conditional_success: 0.9908
+  AUSC: 0.7883
 ============================================================
   code_failed: 0
   define_test_failed: 0
   run_test_failed: 0
 ============================================================
-  plan 사용: 124/257 (48.2%)
-  repair 사용: 55/257 (21.4%)
-  planning 복구 성공: 81/124 (65.3%)
-  repair 복구 성공: 1/55 (1.8%)
+  plan 사용: 118/257 (45.9%)
+  repair 사용: 58/257 (22.6%)
+  planning 복구 성공: 77/118 (65.3%)
+  repair 복구 성공: 0/58 (0.0%)
 ============================================================
-  [planning-cycle] 사용: 0 cycles (0 calls), 성공: 0/0
-  [repair-call] 사용: 0 calls, 성공: 0/0
-  [call-level] plan→repair 성공: 0/0
+  [planning-cycle] 사용: 361 cycles (722 calls), 성공: 77/361 (21.3%)
+  [repair-call] 사용: 284 calls, 성공: 0/284 (0.0%)
+  [call-level] plan→repair 성공: 0/284
+💾 결과 저장: results/qwen25coder7b/mbpp/code_then_plan_repair/step_logs.jsonl (1263건)
+💾 결과 저장: results/qwen25coder7b/mbpp/code_then_plan_repair/trajectory_logs.jsonl (257건)
+💾 결과 저장: results/qwen25coder7b/mbpp/code_then_plan_repair/summary.json
 💾 결과 저장: results/qwen25coder7b/mbpp/code_then_plan_repair/failure_examples.json
-📝 failure_examples: 11개 유형 저장됨
-
+📝 failure_examples: 14개 유형 저장됨
 
 ============================================================
 📊 결과 요약

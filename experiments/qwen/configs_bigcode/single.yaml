@@ -22,11 +22,11 @@ budget:
   max_calls: 1
 
 output:
-  dir: "results/qwen/bigcode/single"
+  dir: "results/qwen25coder7b/bigcode/single"
 
 logging:
-  save_step_level: false
-  save_trajectory_level: false
+  save_step_level: true
+  save_trajectory_level: true
   save_problem_summary: true
   save_run_analysis: true
   save_code: false

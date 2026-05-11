@@ -20,7 +20,6 @@ single
 💾 결과 저장: results/phi35mini/humaneval/single/summary.json
 💾 결과 저장: results/phi35mini/humaneval/single/analysis.json
 
-repair 다시
 ============================================================
 📊 결과 요약
   총 문제: 164
@@ -41,6 +40,29 @@ repair 다시
 💾 결과 저장: results/phi35mini/humaneval/repair/failure_examples.json
 📝 failure_examples: 2개 유형 저장됨
 
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 125
+  실행 성공: 154
+  success@20: 0.7622
+  execution_success_rate: 0.9390
+  conditional_success: 0.8117
+  AUSC: 0.6360
+============================================================
+  code_failed: 0
+  define_test_failed: 0
+  run_test_failed: 0
+============================================================
+  plan 사용: 159/164 (97.0%)
+  plan 복구 성공: 120/159 (75.5%)
+============================================================
+============================================================
+💾 결과 저장: results/phi35mini/humaneval/code_then_plan/step_logs.jsonl (1280건)
+💾 결과 저장: results/phi35mini/humaneval/code_then_plan/trajectory_logs.jsonl (164건)
+💾 결과 저장: results/phi35mini/humaneval/code_then_plan/summary.json
+💾 결과 저장: results/phi35mini/humaneval/code_then_plan/failure_examples.json
+📝 failure_examples: 9개 유형 저장됨
 
 ============================================================
 📊 결과 요약
@@ -119,3 +141,28 @@ proposed-v1
 💾 결과 저장: results/phi35mini/humaneval/proposed_v1/trajectory_logs.jsonl (164건)
 ✅ policy_loop 완료
 
+============================================================
+📊 결과 요약
+  총 문제: 164
+  성공: 125
+  실행 성공: 152
+  success@20: 0.7622
+  execution_success_rate: 0.9268
+  conditional_success: 0.8224
+  AUSC: 0.6122
+============================================================
+  code_failed: 12
+  define_test_failed: 0
+  run_test_failed: 27
+============================================================
+  [problem-level] plan 사용: 117/164 (71.3%)
+  [problem-level] plan 복구 성공: 78/117 (66.7%)
+  [problem-level] repair 사용: 161/164 (98.2%)
+  [problem-level] repair 복구 성공: 44/161 (27.3%)
+  [call-level] planning-cycle 사용: 335 cycles (670 calls), 성공: 78/335 (23.3%)
+  [call-level] repair 호출: 387, 성공: 44/387 (11.4%)
+============================================================
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/summary.json
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/step_logs.jsonl (1221건)
+💾 결과 저장: results/phi35mini/humaneval/proposed_v1/trajectory_logs.jsonl (164건)
+✅ policy_loop 완료

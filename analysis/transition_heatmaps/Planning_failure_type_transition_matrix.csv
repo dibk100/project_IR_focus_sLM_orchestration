@@ -1,7 +1,0 @@
-from,SyntaxError,NameError,TypeError,AssertionError,PLAN_DONE,PASS
-SyntaxError,0,0,0,0,28,0
-NameError,0,0,0,0,19,0
-TypeError,0,0,0,0,1,0
-AssertionError,0,0,0,0,108,0
-PLAN_DONE,13,17,0,93,0,36
-PASS,0,0,0,0,0,0
