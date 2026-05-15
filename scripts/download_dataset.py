@@ -3,7 +3,7 @@ Generic dataset downloader for code benchmarks
 - Supports: HumanEval, HumanEval Pro, MBPP, etc.
 - Usage examples:
 
-python script/download_dataset.py --name mbpp_pro
+python scripts/download_dataset.py --name livecodebench
 
 pip install datasets
 """

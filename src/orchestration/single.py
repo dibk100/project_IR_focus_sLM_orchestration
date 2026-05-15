@@ -1,5 +1,6 @@
 # src/orchestration/single.py
 import gc
+import json
 import os
 import sys
 import time
@@ -12,6 +13,12 @@ from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
 from src.utils.io import save_result, save_results_jsonl, make_run_id
 from src.utils.dataloader import load_task_and_adapter
+
+import warnings
+import numpy as np
+
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="Mean of empty slice")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="Degrees of freedom <= 0")
 
 
 def _shorten(text: str | None, max_len: int = 8000) -> str:
@@ -30,18 +37,6 @@ def _print_header(title: str, width: int = 80):
 
 
 def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_code: str):
-    """
-    sample 모드에서 사람이 눈으로 pipeline 흐름을 따라갈 수 있도록
-    단계별 input/output을 출력한다.
-
-    특히 HumanEval은 아래 흐름을 그대로 보여준다:
-    (1) input: prompt
-    (2) output y
-    (3) code = prompt + y
-    (4) exec(code) -> candidate 생성
-    (5) exec(test) -> check 생성
-    (6) check(candidate) -> assert 평가
-    """
     _print_header("SAMPLE DEBUG :: STEP 1. INPUT PROMPT")
     print(_shorten(prompt))
 
@@ -51,7 +46,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
     _print_header("SAMPLE DEBUG :: STEP 3. EXECUTABLE CODE")
     print(_shorten(generated_code))
 
-    # HumanEval 전용 흐름 상세 출력
     if hasattr(sample, "test") and hasattr(sample, "entry_point"):
         namespace = {}
 
@@ -98,7 +92,6 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print("FAILED")
             print(repr(e))
 
-    # MBPP
     elif hasattr(sample, "test_list"):
         _print_header("SAMPLE DEBUG :: MBPP TEST SETUP")
         if hasattr(sample, "test_setup_code"):
@@ -112,10 +105,33 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
             print(_shorten(test_case))
             print("-" * 40)
 
-    # BigCode
     elif hasattr(sample, "test"):
         _print_header("SAMPLE DEBUG :: TEST CODE")
         print(_shorten(sample.test))
+
+
+def _append_jsonl(path: str, record: dict):
+    """단일 레코드를 jsonl 파일에 즉시 append"""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _load_completed_ids(step_log_path: str) -> set:
+    """기존 step_logs.jsonl에서 완료된 problem_id 목록 복원"""
+    completed = set()
+    if not os.path.exists(step_log_path):
+        return completed
+    with open(step_log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                completed.add(row["problem_id"])
+            except Exception:
+                continue
+    return completed
 
 
 def run_single_shot(config_path: str):
@@ -154,10 +170,13 @@ def run_single_shot(config_path: str):
     save_run_analysis = logging_cfg.get("save_run_analysis", True)
     save_code = logging_cfg.get("save_code", True)
 
-    # debug mode
-    debug_mode = debug_cfg.get("mode", "run")   # "run" | "sample"
+    debug_mode = debug_cfg.get("mode", "run")
 
     os.makedirs(output_dir, exist_ok=True)
+
+    # 체크포인트 경로 미리 정의
+    step_log_path = os.path.join(output_dir, "step_logs.jsonl")
+    trajectory_log_path = os.path.join(output_dir, "trajectory_logs.jsonl")
 
     # sample 모드일 때 print를 파일로 저장
     stdout_backup = sys.stdout
@@ -204,27 +223,69 @@ def run_single_shot(config_path: str):
         task, adapter = load_task_and_adapter(dataset_name)
         print(f"📦 데이터셋: {dataset_name} | size={len(task)}")
 
+        # ── CHECKPOINT: 이미 완료된 problem_id 복원 ──────────────────
+        completed_ids = _load_completed_ids(step_log_path)
+        if completed_ids:
+            print(f"⏭️  체크포인트 감지: {len(completed_ids)}개 문제 스킵")
+        # ─────────────────────────────────────────────────────────────
+
         # 3. 모델 로드
         print(f"🔄 모델 로딩: {model_name}")
         model = HFModel(
             model_name=model_name,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
-            backend=model_cfg.get("backend", "hf"),   # 추가
-            api_base=model_cfg.get("api_base", None), # 추가
+            backend=model_cfg.get("backend", "hf"),
+            api_base=model_cfg.get("api_base", None),
         )
         print("✅ 모델 로딩 완료")
 
         # 4. 실험 실행
+        # 요약 통계용 in-memory 리스트 (재시작 후에도 resume된 결과 포함해야 하므로 완료분 재로드)
         step_logs = []
         trajectory_logs = []
         eval_results = []
+
+        # resume 시 기존 결과를 메모리에 복원 (summary 계산용)
+        if completed_ids:
+            if os.path.exists(step_log_path):
+                with open(step_log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            step_logs.append(json.loads(line))
+            if os.path.exists(trajectory_log_path):
+                with open(trajectory_log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            traj = json.loads(line)
+                            trajectory_logs.append(traj)
+                            # eval_results 복원 (passed 여부만 필요)
+                            eval_results.append(SimpleNamespace(
+                                status=traj["final_status"],
+                                passed=(traj["final_status"] == "PASS"),
+                                exec_ok=(traj["final_status"] not in ("TOKEN_OVERFLOW",)),
+                                test_pass=(traj["final_status"] == "PASS"),
+                                tests_passed=traj.get("final_tests_passed", 0),
+                                tests_total=traj.get("final_tests_total", 0),
+                                error_type=None,
+                                error_stage=None,
+                                num_calls=traj.get("call_count", 1),
+                            ))
 
         samples_to_run = min(num_samples, len(task))
 
         for i in range(samples_to_run):
             sample = task.get_sample(i)
             problem_id = sample.task_id
+
+            # ── CHECKPOINT: 완료된 문제 스킵 ─────────────────────────
+            if problem_id in completed_ids:
+                print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} --- ⏭️ SKIP")
+                continue
+            # ─────────────────────────────────────────────────────────
+
             trajectory_id = f"{problem_id}_run0"
 
             print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} ---")
@@ -239,7 +300,6 @@ def run_single_shot(config_path: str):
             except Exception as e:
                 gen_end = time.perf_counter()
                 print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 스킵: {e}")
-                # 빈 결과로 기록
                 step_entry = {
                     "run_id": run_id, "dataset": dataset_name,
                     "problem_id": problem_id, "method": method_name,
@@ -256,8 +316,8 @@ def run_single_shot(config_path: str):
                 }
                 if hasattr(sample, "entry_point"):
                     step_entry["entry_point"] = sample.entry_point
-                step_logs.append(step_entry)
-                trajectory_logs.append({
+
+                trajectory_entry = {
                     "run_id": run_id, "dataset": dataset_name,
                     "problem_id": problem_id, "method": method_name,
                     "trajectory_id": trajectory_id,
@@ -267,9 +327,18 @@ def run_single_shot(config_path: str):
                     "total_tokens": 0, "total_latency": gen_end - gen_start,
                     "transition_path": ["TOKEN_OVERFLOW"],
                     "budget_used": {"tokens": 0, "calls": 1, "latency": gen_end - gen_start},
-                })
-                gc.collect()
-                # eval_results에도 추가하여 요약 통계에 반영
+                }
+
+                step_logs.append(step_entry)
+                trajectory_logs.append(trajectory_entry)
+
+                # ── CHECKPOINT: 즉시 디스크에 flush ──────────────────
+                if save_step_level:
+                    _append_jsonl(step_log_path, step_entry)
+                if save_trajectory_level:
+                    _append_jsonl(trajectory_log_path, trajectory_entry)
+                # ─────────────────────────────────────────────────────
+
                 eval_results.append(SimpleNamespace(
                     status="TOKEN_OVERFLOW", passed=False,
                     exec_ok=False, test_pass=False,
@@ -277,7 +346,9 @@ def run_single_shot(config_path: str):
                     error_type="TokenOverflow", error_stage="generate",
                     num_calls=0,
                 ))
+                gc.collect()
                 continue
+
             gen_end = time.perf_counter()
             latency_sec = gen_end - gen_start
 
@@ -285,11 +356,10 @@ def run_single_shot(config_path: str):
             input_tokens = gen_result["input_tokens"]
             output_tokens = gen_result["output_tokens"]
             total_tokens = gen_result["total_tokens"]
-            
+
             # 4-3. 코드 추출
             generated_code = adapter.extract_code(sample, raw_text)
 
-            # sample 모드일 때 단계별 실행 흐름 출력
             if debug_mode == "sample":
                 _print_sample_execution_flow(
                     sample=sample,
@@ -361,8 +431,6 @@ def run_single_shot(config_path: str):
             if hasattr(sample, "entry_point"):
                 step_entry["entry_point"] = sample.entry_point
 
-            step_logs.append(step_entry)
-
             # 4-7. trajectory-level log
             final_status = attempt_record.status
 
@@ -393,7 +461,15 @@ def run_single_shot(config_path: str):
                 },
             }
 
+            step_logs.append(step_entry)
             trajectory_logs.append(trajectory_entry)
+
+            # ── CHECKPOINT: 즉시 디스크에 flush ──────────────────────
+            if save_step_level:
+                _append_jsonl(step_log_path, step_entry)
+            if save_trajectory_level:
+                _append_jsonl(trajectory_log_path, trajectory_entry)
+            # ─────────────────────────────────────────────────────────
 
             pretty_status = (
                 "✅ PASS"
@@ -402,11 +478,10 @@ def run_single_shot(config_path: str):
             )
             print(f"  {pretty_status}")
 
-            # OOM 방지
             del gen_result, step_entry, trajectory_entry
             del attempt_record, exec_result
             gc.collect()
-        
+
         # 5. 결과 요약
         summary = summarize_phase1_results(eval_results, k=max_calls)
 
@@ -496,19 +571,7 @@ def run_single_shot(config_path: str):
             "failure_family_counts": failure_family_counts,
         }
 
-        # 8. 결과 저장
-        if save_step_level:
-            save_results_jsonl(
-                step_logs,
-                os.path.join(output_dir, "step_logs.jsonl"),
-            )
-
-        if save_trajectory_level:
-            save_results_jsonl(
-                trajectory_logs,
-                os.path.join(output_dir, "trajectory_logs.jsonl"),
-            )
-
+        # 8. 결과 저장 — step/trajectory는 이미 flush됐으므로 summary/analysis만 저장
         if save_problem_summary:
             save_result(
                 problem_summary,
@@ -522,7 +585,6 @@ def run_single_shot(config_path: str):
             )
 
     finally:
-        # sample 모드에서 stdout 복구
         if log_fp is not None:
             log_fp.close()
             sys.stdout = stdout_backup
