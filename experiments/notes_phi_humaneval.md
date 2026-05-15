@@ -20,6 +20,7 @@ single
 💾 결과 저장: results/phi35mini/humaneval/single/summary.json
 💾 결과 저장: results/phi35mini/humaneval/single/analysis.json
 
+repair
 ============================================================
 📊 결과 요약
   총 문제: 164
@@ -40,30 +41,7 @@ single
 💾 결과 저장: results/phi35mini/humaneval/repair/failure_examples.json
 📝 failure_examples: 2개 유형 저장됨
 
-============================================================
-📊 결과 요약
-  총 문제: 164
-  성공: 125
-  실행 성공: 154
-  success@20: 0.7622
-  execution_success_rate: 0.9390
-  conditional_success: 0.8117
-  AUSC: 0.6360
-============================================================
-  code_failed: 0
-  define_test_failed: 0
-  run_test_failed: 0
-============================================================
-  plan 사용: 159/164 (97.0%)
-  plan 복구 성공: 120/159 (75.5%)
-============================================================
-============================================================
-💾 결과 저장: results/phi35mini/humaneval/code_then_plan/step_logs.jsonl (1280건)
-💾 결과 저장: results/phi35mini/humaneval/code_then_plan/trajectory_logs.jsonl (164건)
-💾 결과 저장: results/phi35mini/humaneval/code_then_plan/summary.json
-💾 결과 저장: results/phi35mini/humaneval/code_then_plan/failure_examples.json
-📝 failure_examples: 9개 유형 저장됨
-
+planning
 ============================================================
 📊 결과 요약
   총 문제: 164
@@ -85,7 +63,7 @@ single
 📝 failure_examples: 8개 유형 저장됨
 
 
-code_then_plan_repair
+planning_repair
 ============================================================
 📊 결과 요약
   총 문제: 164

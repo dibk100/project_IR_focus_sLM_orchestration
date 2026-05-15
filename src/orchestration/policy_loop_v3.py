@@ -1,102 +1,39 @@
 """
-Policy
+Policy-main
 
 stage별 오류 유형과, 실패 반복 패턴을 기반으로, repair / replan 중 적절한 전략을 동적으로 선택하는 policy를 구현하고자 함.
 
-State = {
-    failure_type : 현재 실행 결과의 상위 실패 단계 (PASS / EXEC_FAIL / TEST_FAIL)
-    error_type : 실패의 구체적인 에러 타입 
-                 (AssertionError / SyntaxError / TypeError / ...)
-    previous_state : 직전 step의 실패 상태 
-                     (prev_failure_type, prev_error_type)
-    repetition_pattern : 동일한 (failure_type, error_type)가 
-                         연속으로 반복된 횟수
-    last_action : 직전에 수행한 전략 
-                  (generate / repair / plan)
-    plan_budget_usage : 현재까지 사용한 planning 횟수 
-                        (num_plan_calls)
-}
+MAX_CALLS = 20
 
-Action = {
-    generate : 문제 입력만을 기반으로 초기 코드를 생성하는 단계
+Generate = 1 LM call
+Repair = 1 LM call
+Planning = 2 LM calls
+Terminate = 0 LM calls
 
-    repair : 이전에 생성한 코드와 실패 피드백(error message)을 바탕으로 
-             코드를 수정하는 단계
-             
-    plan : 해결 계획 생성(re-plan : 독립 action이 아닌 두 번째 이후 plan 호출에서 사용하는 planner prompt variant)
-    plan_code : 생성된 plan을 기반으로 코드 생성 및 평가
-}
+MAX_PLAN_CYCLES = 3        # Planning 3회 = 6 LM calls
+MAX_REPAIR_CALLS = 6       # Repair 전체 최대 6 LM calls (global budget)
 
-State = {
-    failure_stage:
-        current execution outcome
-        (PASS / EXEC_FAIL / TEST_FAIL)
+STAGNATION_K = 3
+NAMEERROR_K = 2
+PLANNING_FAILURE_LIMIT = 2
 
-    failure_type:
-        specific observed error type
-        (AssertionError / SyntaxError / TypeError / ...)
+Generate: 1 call
+Planning: 최대 3 cycles = 6 calls
+Repair: 최대 6 calls
 
-    previous_state:
-        failure state observed at the previous refinement step
+총 명시적 제어 budget = 13 calls
 
-    stagnation_count:
-        number of consecutive repeated failures
-        without successful recovery
-
-    last_action:
-        refinement strategy applied at the previous step
-        (Generate / Repair / Planning)
-
-    num_planning_calls:
-        cumulative number of planning-based refinements
-}
-Action = {
-    Generate:
-        generate an initial program from the problem input
-
-    Repair:
-        refine the previously generated program
-        using failure feedback
-
-    Planning:
-        generate a solution plan and regenerate
-        a new program conditioned on the generated plan
-
-    Terminate:
-        stop refinement
-}
-
-1. Initial Rule
-   At the first step, always execute generate.
-
-2. AssertionError Planning Rule
-   If failure_type == TEST_FAIL and error_type == AssertionError:
-       if plan is available:
-           execute plan
-       else:
-           stop
-
-3. Repair Default Rule
-   For all other failures:
-       execute repair up to max_repair_steps within the current policy cycle.
-
-4. Stagnation Rule
-   If the same (failure_type, error_type) repeats at least K times:
-       if plan is available:
-           execute plan
-       else:
-           stop
-
-5. Plan Budget Rule
-   If the number of planning cycles reaches max_plan_calls:
-       planning is unavailable.
-       If planning is required, stop.
-
-6. Global Call Budget Rule
-   If call_count >= max_calls:
-       stop.
-   If call_count + 2 > max_calls:
-       planning is unavailable, because plan requires two calls.
+Policy Rules:
+    1. Generate if first step
+    2. Terminate if PASS
+    3. Terminate if call_count >= 20
+    4. Compute planning_available / repair_available / planning_available_for_state
+    5. Update planning_fail_count_by_state
+    6. NameError repeated after planning → Terminate
+    7. Previous action was Planning → Repair if possible, else Terminate
+    8. Stagnation → Planning if possible, else Repair if possible, else Terminate
+    9. High-value failure → Planning if possible
+    10. Default → Repair if possible, else Terminate
 """
 from __future__ import annotations
 
@@ -105,10 +42,10 @@ import os
 import sys
 import time
 import yaml
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
-
 
 from src.models.hf_model_vllm import HFModel
 from src.evaluation.metrics import summarize_failure_breakdown, summarize_phase1_results
@@ -121,6 +58,24 @@ from src.utils.prompt_loader import (
     build_replanner_prompt_for_sample,
 )
 from src.utils.prompting.planner_coder import extract_planner_output
+
+
+# ============================================================
+# Policy Constants
+# ============================================================
+
+MAX_CALLS = 20
+MAX_PLAN_CYCLES = 3
+MAX_REPAIR_CALLS = 6
+PLANNING_FAILURE_LIMIT = 2
+STAGNATION_K = 3
+NAMEERROR_K = 2
+
+HIGH_VALUE_ERRORS = {
+    "AssertionError",
+    "SyntaxError",
+    "NameError",
+}
 
 
 # ============================================================
@@ -212,15 +167,177 @@ def _extract_code_for_plan(adapter, sample, raw_text: str):
 
 
 # ============================================================
-# Policy helpers
+# Policy State
 # ============================================================
 
 @dataclass
-class StepRecord:
-    fail: str
-    error_type: str
-    action: str   # generate / repair / plan
+class PolicyState:
+    """Per-problem mutable policy state."""
+    call_count: int = 0
+    plan_cycle_count: int = 0
+    repair_call_count: int = 0
 
+    previous_action: Optional[str] = None          # "generate" / "repair" / "plan"
+    previous_failure_state: Optional[Tuple] = None  # (failure_type, error_type)
+
+    same_failure_state_repeat_count: int = 0
+    same_error_repeat_count: int = 0
+
+    planning_fail_count_by_state: Dict[Tuple, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+
+    def get_failure_state(self, attempt_record) -> Tuple[str, str]:
+        ft = coarse_fail(attempt_record.status)
+        et = normalize_error_type(attempt_record.error_type)
+        return (ft, et)
+
+    def update_repeat_counts(self, current_failure_state: Tuple):
+        if current_failure_state == self.previous_failure_state:
+            self.same_failure_state_repeat_count += 1
+        else:
+            self.same_failure_state_repeat_count = 1
+
+        cur_error = current_failure_state[1]
+        prev_error = self.previous_failure_state[1] if self.previous_failure_state else None
+        if cur_error == prev_error:
+            self.same_error_repeat_count += 1
+        else:
+            self.same_error_repeat_count = 1
+
+    def select_action(self, attempt_record) -> str:
+        """
+        Main policy decision function.
+
+        Rules (in order):
+            1. Generate if first step
+            2. Terminate if PASS
+            3. Terminate if call_count >= MAX_CALLS
+            4. Compute availability flags
+            5. Update planning_fail_count_by_state
+            6. NameError repeated after planning → Terminate
+            7. Previous action was Planning → Repair if possible, else Terminate
+            8. Stagnation → Planning / Repair / Terminate
+            9. High-value failure → Planning if possible
+            10. Default → Repair / Terminate
+        """
+        # --------------------------------------------------
+        # Rule 1. Initial Rule
+        # --------------------------------------------------
+        if self.call_count == 0:
+            return "generate"
+
+        # --------------------------------------------------
+        # Rule 2. Success Rule
+        # --------------------------------------------------
+        if attempt_record.passed:
+            return "terminate"
+
+        # --------------------------------------------------
+        # Rule 3. Global Budget Rule
+        # --------------------------------------------------
+        if self.call_count >= MAX_CALLS:
+            return "terminate"
+
+        current_failure_state = self.get_failure_state(attempt_record)
+        error_type = normalize_error_type(attempt_record.error_type)
+
+        # --------------------------------------------------
+        # Rule 4. Compute availability flags
+        # --------------------------------------------------
+        planning_available = (
+            self.call_count + 2 <= MAX_CALLS
+            and self.plan_cycle_count < MAX_PLAN_CYCLES
+        )
+
+        repair_available = (
+            self.call_count + 1 <= MAX_CALLS
+            and self.repair_call_count < MAX_REPAIR_CALLS
+        )
+
+        planning_available_for_state = (
+            self.planning_fail_count_by_state[current_failure_state]
+            < PLANNING_FAILURE_LIMIT
+        )
+
+        # --------------------------------------------------
+        # Rule 5. Update planning_fail_count_by_state
+        # --------------------------------------------------
+        if (
+            self.previous_action == "plan"
+            and current_failure_state == self.previous_failure_state
+        ):
+            self.planning_fail_count_by_state[current_failure_state] += 1
+
+        # --------------------------------------------------
+        # Rule 6. NameError Termination Rule
+        # --------------------------------------------------
+        if (
+            error_type == "NameError"
+            and self.same_error_repeat_count >= NAMEERROR_K
+            and self.plan_cycle_count > 0
+        ):
+            return "terminate"
+
+        # --------------------------------------------------
+        # Rule 7. Post-Planning Repair Rule
+        # --------------------------------------------------
+        if self.previous_action == "plan":
+            if repair_available:
+                return "repair"
+            else:
+                return "terminate"
+
+        # --------------------------------------------------
+        # Rule 8. Stagnation Rule
+        # --------------------------------------------------
+        if self.same_failure_state_repeat_count >= STAGNATION_K:
+            if planning_available and planning_available_for_state:
+                return "plan"
+            elif repair_available:
+                return "repair"
+            else:
+                return "terminate"
+
+        # --------------------------------------------------
+        # Rule 9. High-value Planning Rule
+        # --------------------------------------------------
+        if (
+            error_type in HIGH_VALUE_ERRORS
+            and planning_available
+            and planning_available_for_state
+        ):
+            return "plan"
+
+        # --------------------------------------------------
+        # Rule 10. Default Repair Rule
+        # --------------------------------------------------
+        if repair_available:
+            return "repair"
+
+        return "terminate"
+
+    def after_action(self, action: str, attempt_record):
+        """Call after executing an action to update counters and previous state."""
+        current_failure_state = self.get_failure_state(attempt_record)
+
+        if action == "generate":
+            self.call_count += 1
+        elif action == "repair":
+            self.call_count += 1
+            self.repair_call_count += 1
+        elif action == "plan":
+            self.call_count += 2   # planner + coder
+            self.plan_cycle_count += 1
+
+        self.update_repeat_counts(current_failure_state)
+        self.previous_failure_state = current_failure_state
+        self.previous_action = action
+
+
+# ============================================================
+# Policy helpers (shared util)
+# ============================================================
 
 def coarse_fail(status: str) -> str:
     if status == "PASS":
@@ -235,241 +352,8 @@ def normalize_error_type(error_type: Optional[str]) -> str:
     return s if s else "NONE"
 
 
-def make_signature(fail: str, error_type: str) -> Tuple[str, str]:
-    return (fail, error_type)
-
-
-def num_plan_calls(history: List[StepRecord]) -> int:
-    return sum(1 for x in history if x.action == "plan")
-
-
-def same_signature_run_length(history: List[StepRecord]) -> int:
-    if not history:
-        return 0
-    last_sig = make_signature(history[-1].fail, history[-1].error_type)
-    cnt = 1
-    for step in reversed(history[:-1]):
-        if make_signature(step.fail, step.error_type) == last_sig:
-            cnt += 1
-        else:
-            break
-    return cnt
-
-
-def same_fail_family_run_length(history: List[StepRecord]) -> int:
-    if not history:
-        return 0
-    last_fail = history[-1].fail
-    cnt = 1
-    for step in reversed(history[:-1]):
-        if step.fail == last_fail:
-            cnt += 1
-        else:
-            break
-    return cnt
-
-
-def make_policy_state(history: List[StepRecord]) -> Dict[str, Any]:
-    if not history:
-        return {
-            "prev_fail": "NONE",
-            "prev_error": "NONE",
-            "last_fail": "NONE",
-            "last_error": "NONE",
-            "same_signature_run_length": 0,
-            "same_fail_family_run_length": 0,
-            "last_action": "NONE",
-            "num_plan_calls": 0,
-        }
-
-    last = history[-1]
-    prev = history[-2] if len(history) >= 2 else None
-
-    return {
-        "prev_fail": prev.fail if prev else "NONE",
-        "prev_error": prev.error_type if prev else "NONE",
-        "last_fail": last.fail,
-        "last_error": last.error_type,
-        "same_signature_run_length": same_signature_run_length(history),
-        "same_fail_family_run_length": same_fail_family_run_length(history),
-        "last_action": last.action,
-        "num_plan_calls": num_plan_calls(history),
-    }
-
-
-def plan_available(history: List[StepRecord], policy_cfg: Dict[str, Any]) -> bool:
-    max_plan_calls = policy_cfg.get("max_plan_calls", 3)
-    return num_plan_calls(history) < max_plan_calls
-
-
-# Failure-transition aware policy helpers
-LOCAL_EXEC_ERRORS = {
-    "SyntaxError",
-    "IndentationError",
-    "TabError",
-    "NameError",
-    "UnboundLocalError",
-}
-
-HARD_EXEC_ERRORS = {
-    "TimeoutError",
-    "RecursionError",
-    "MemoryError",
-}
-
-def planning_cycle_available(
-    history: List[StepRecord],
-    policy_cfg: Dict[str, Any],
-    call_count: int,
-    max_calls: int,
-) -> Tuple[bool, Optional[str]]:
-    """Planning costs two model calls: planner + coder."""
-    if call_count + 2 > max_calls:
-        return False, "max_calls_reached_before_plan_cycle"
-    if not plan_available(history, policy_cfg):
-        return False, "plan_budget_exhausted"
-    return True, None
-
-
-def previous_failure(history: List[StepRecord]) -> Tuple[str, str]:
-    if len(history) < 2:
-        return ("NONE", "NONE")
-    prev = history[-2]
-    return prev.fail, prev.error_type
-
-
-def is_test_to_exec_collapse(history: List[StepRecord]) -> bool:
-    """Repair-induced collapse: TEST_FAIL -> EXEC_FAIL."""
-    if len(history) < 2:
-        return False
-    prev = history[-2]
-    cur = history[-1]
-    return prev.fail == "TEST_FAIL" and cur.fail == "EXEC_FAIL"
-
-
-def last_plan_failure_run_length(history: List[StepRecord]) -> int:
-    """How many consecutive failures were produced by planning."""
-    cnt = 0
-    for step in reversed(history):
-        if step.action == "plan" and step.fail != "PASS":
-            cnt += 1
-        elif step.fail == "PASS":
-            break
-        else:
-            break
-    return cnt
-
-
-def repairs_since_last_plan_or_generate(history: List[StepRecord]) -> int:
-    cnt = 0
-    for step in reversed(history):
-        if step.action == "repair":
-            cnt += 1
-        elif step.action in {"plan", "generate"}:
-            break
-    return cnt
-
-
-def choose_next_policy_action(
-    *,
-    history: List[StepRecord],
-    current_fail: str,
-    current_error: str,
-    call_count: int,
-    max_calls: int,
-    policy_cfg: Dict[str, Any],
-) -> Tuple[str, Optional[str]]:
-    """
-    Return one of: ("repair", None), ("plan", None), ("stop", reason).
-
-    Empirical motivation:
-    - Repair is useful for local executable failures and first semantic mismatches.
-    - Repeated TEST/EXEC failures and TEST->EXEC collapse should escalate to planning.
-    - Planning is expensive, so the policy stops when planning is required but unavailable.
-    """
-    if current_fail == "PASS":
-        return "stop", "already_passed"
-
-    if call_count >= max_calls:
-        return "stop", "max_calls_reached"
-
-    stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
-    exec_stagnation_threshold = policy_cfg.get(
-        "exec_stagnation_threshold",
-        stagnation_threshold,
-    )
-    test_stagnation_threshold = policy_cfg.get(
-        "test_stagnation_threshold",
-        stagnation_threshold,
-    )
-    max_repairs_per_cycle = policy_cfg.get("max_repair_steps", 3)
-    max_repairs_after_plan = policy_cfg.get("max_repairs_after_plan", 1)
-    max_consecutive_plan_failures = policy_cfg.get("max_consecutive_plan_failures", 2)
-
-    same_sig = same_signature_run_length(history)
-    same_family = same_fail_family_run_length(history)
-    last_action = history[-1].action if history else "NONE"
-
-    def require_plan() -> Tuple[str, Optional[str]]:
-        ok, reason = planning_cycle_available(history, policy_cfg, call_count, max_calls)
-        if ok:
-            return "plan", None
-        return "stop", reason
-
-    # Rule 1. Repair-induced collapse: semantic failure became executable failure.
-    # This is a strong signal that local repair is destabilizing the code.
-    if is_test_to_exec_collapse(history):
-        return require_plan()
-
-    # Rule 2. Repeated failures should escape the current basin through planning.
-    if current_fail == "TEST_FAIL" and (
-        same_sig >= test_stagnation_threshold or same_family >= test_stagnation_threshold + 1
-    ):
-        return require_plan()
-
-    if current_fail == "EXEC_FAIL" and (
-        same_sig >= exec_stagnation_threshold or same_family >= exec_stagnation_threshold + 1
-    ):
-        return require_plan()
-
-    # Rule 3. Avoid repeated planning loops. If planning repeatedly fails, stop rather
-    # than spending the remaining budget on low-yield re-planning.
-    if last_action == "plan" and last_plan_failure_run_length(history) >= max_consecutive_plan_failures:
-        return "stop", "repeated_plan_failure"
-
-    # Rule 4. Local executable failures are repaired first.
-    if current_fail == "EXEC_FAIL":
-        if current_error in HARD_EXEC_ERRORS:
-            return require_plan()
-
-        if repairs_since_last_plan_or_generate(history) >= max_repairs_per_cycle:
-            return require_plan()
-
-        if current_error in LOCAL_EXEC_ERRORS:
-            return "repair", None
-
-        # Unknown executable failures get one repair attempt, then planning if repeated.
-        return "repair", None
-
-    # Rule 5. Semantic failures get one local repair attempt, but do not loop.
-    if current_fail == "TEST_FAIL":
-        if last_action == "plan":
-            if repairs_since_last_plan_or_generate(history) >= max_repairs_after_plan:
-                return require_plan()
-            return "repair", None
-
-        if repairs_since_last_plan_or_generate(history) >= max_repairs_per_cycle:
-            return require_plan()
-
-        return "repair", None
-
-    # CODE_FAIL / empty output / unknown extraction failures are usually not worth
-    # repeated local repair; prefer planning if available.
-    return require_plan()
-
-
 # ============================================================
-# Step runners
+# Step runners  (identical to policy_loop.py)
 # ============================================================
 
 def _run_generate_step(
@@ -509,7 +393,6 @@ def _run_generate_step(
     else:
         generated_code = adapter.extract_code(sample, raw_text)
         exec_result = adapter.execute(sample, generated_code)
-
         attempt_record = adapter.make_attempt_record(
             sample=sample,
             method=method_name,
@@ -552,7 +435,6 @@ def _run_plan_then_code_step(
     error_message: str | None = None,
     previous_code: str | None = None,
 ):
-    
     if previous_plan is None:
         planner_prompt = build_planner_prompt_for_sample(sample)
     else:
@@ -607,7 +489,6 @@ def _run_plan_then_code_step(
     else:
         generated_code = _extract_code_for_plan(adapter, sample, code_raw_text)
         exec_result = adapter.execute(sample, generated_code)
-
         attempt_record = adapter.make_attempt_record(
             sample=sample,
             method=method_name,
@@ -688,7 +569,6 @@ def _run_repair_step(
     else:
         repaired_code = _maybe_extract_code_for_repair(adapter, sample, repair_raw_text)
         exec_result = adapter.execute(sample, repaired_code)
-
         attempt_record = adapter.make_attempt_record(
             sample=sample,
             method=method_name,
@@ -717,10 +597,6 @@ def _run_repair_step(
 # ============================================================
 # Logging helpers
 # ============================================================
-
-def _make_policy_state_for_log(history: List[StepRecord]) -> Dict[str, Any]:
-    return make_policy_state(history)
-
 
 def _append_step_log(
     step_logs: List[Dict[str, Any]],
@@ -751,10 +627,9 @@ def _append_step_log(
     is_repair: bool = False,
     is_planner: bool = False,
 ):
-    
     if not save_step_level:
         return
-    
+
     entry = {
         "run_id": run_id,
         "dataset": dataset_name,
@@ -795,6 +670,19 @@ def _append_step_log(
     step_logs.append(entry)
 
 
+def _make_policy_state_snapshot(ps: PolicyState) -> Dict[str, Any]:
+    return {
+        "call_count": ps.call_count,
+        "plan_cycle_count": ps.plan_cycle_count,
+        "repair_call_count": ps.repair_call_count,
+        "previous_action": ps.previous_action,
+        "previous_failure_state": ps.previous_failure_state,
+        "same_failure_state_repeat_count": ps.same_failure_state_repeat_count,
+        "same_error_repeat_count": ps.same_error_repeat_count,
+        "planning_fail_count_by_state": dict(ps.planning_fail_count_by_state),
+    }
+
+
 # ============================================================
 # Main runner
 # ============================================================
@@ -803,58 +691,52 @@ def run_policy_loop(config_path: str):
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
-    run_cfg = config.get("run", {})
-    dataset_cfg = config.get("dataset", {})
-    model_cfg = config.get("model", {})
-    method_cfg = config.get("method", {})
-    budget_cfg = config.get("budget", {})
-    policy_cfg = config.get("policy", {})
-    output_cfg = config.get("output", {})
-    logging_cfg = config.get("logging", {})
-    debug_cfg = config.get("debug", {})
+    run_cfg      = config.get("run", {})
+    dataset_cfg  = config.get("dataset", {})
+    model_cfg    = config.get("model", {})
+    method_cfg   = config.get("method", {})
+    budget_cfg   = config.get("budget", {})
+    output_cfg   = config.get("output", {})
+    logging_cfg  = config.get("logging", {})
+    debug_cfg    = config.get("debug", {})
 
-    run_id = make_run_id(config)
-    seed = run_cfg.get("seed", 42)
-    
-    stagnation_threshold = policy_cfg.get("stagnation_threshold", 2)
+    run_id   = make_run_id(config)
+    seed     = run_cfg.get("seed", 42)
 
     dataset_name = dataset_cfg.get("name", "humaneval")
-    num_samples = dataset_cfg.get("num_samples", 1)
+    num_samples  = dataset_cfg.get("num_samples", 1)
 
-    model_name = model_cfg.get("name", "")
+    model_name     = model_cfg.get("name", "")
     max_new_tokens = model_cfg.get("max_new_tokens", 512)
-    temperature = model_cfg.get("temperature", 0.0)
+    temperature    = model_cfg.get("temperature", 0.0)
 
-    planner_cfg_inner = model_cfg.get("planner", {})
+    planner_cfg_inner  = model_cfg.get("planner", {})
     planner_max_tokens = planner_cfg_inner.get("max_new_tokens", 256)
-    
-    coder_cfg_inner = model_cfg.get("coder", {})
+
+    coder_cfg_inner  = model_cfg.get("coder", {})
     coder_max_tokens = coder_cfg_inner.get("max_new_tokens", max_new_tokens)
 
-    repair_cfg_inner = model_cfg.get("repair", {})
+    repair_cfg_inner  = model_cfg.get("repair", {})
     repair_max_tokens = repair_cfg_inner.get("max_new_tokens", max_new_tokens)
 
-    method_name = method_cfg.get("name", "policy_loop")
-    max_calls = budget_cfg.get("max_calls", 10)
+    method_name = method_cfg.get("name", "policy_loop_main")
+    max_calls   = budget_cfg.get("max_calls", MAX_CALLS)
 
-    max_plan_calls = policy_cfg.get("max_plan_calls", 3)
-    max_repair_steps = policy_cfg.get("max_repair_steps", 3)
+    output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/policy_loop_main")
 
-    output_dir = output_cfg.get("dir", f"results/RUN/{dataset_name}/policy_loop")
-
-    save_step_level = logging_cfg.get("save_step_level", True)
+    save_step_level      = logging_cfg.get("save_step_level", True)
     save_trajectory_level = logging_cfg.get("save_trajectory_level", True)
-    save_problem_summary = logging_cfg.get("save_problem_summary", True)
-    save_run_analysis = logging_cfg.get("save_run_analysis", True)
-    save_code = logging_cfg.get("save_code", True)
-    save_failure_examples  = logging_cfg.get("failure_examples", True)
+    save_problem_summary  = logging_cfg.get("save_problem_summary", True)
+    save_run_analysis     = logging_cfg.get("save_run_analysis", True)
+    save_code             = logging_cfg.get("save_code", True)
+    save_failure_examples = logging_cfg.get("failure_examples", True)
 
     debug_mode = debug_cfg.get("mode", "run")
 
     os.makedirs(output_dir, exist_ok=True)
 
     print("=" * 60)
-    print("🔄 Policy Loop 실험")
+    print("🔄 Policy-main Loop 실험")
     print("=" * 60)
     print(f"run_id              : {run_id}")
     print(f"dataset             : {dataset_name}")
@@ -864,8 +746,11 @@ def run_policy_loop(config_path: str):
     print(f"planner_max_tokens  : {planner_max_tokens}")
     print(f"repair_max_tokens   : {repair_max_tokens}")
     print(f"max_calls           : {max_calls}")
-    print(f"max_plan_calls      : {max_plan_calls}")
-    print(f"max_repair_steps    : {max_repair_steps}")
+    print(f"MAX_PLAN_CYCLES     : {MAX_PLAN_CYCLES}")
+    print(f"MAX_REPAIR_CALLS    : {MAX_REPAIR_CALLS}")
+    print(f"STAGNATION_K        : {STAGNATION_K}")
+    print(f"NAMEERROR_K         : {NAMEERROR_K}")
+    print(f"PLANNING_FAILURE_LIMIT : {PLANNING_FAILURE_LIMIT}")
     print(f"seed                : {seed}")
     print(f"debug_mode          : {debug_mode}")
     print(f"output_dir          : {output_dir}")
@@ -878,11 +763,19 @@ def run_policy_loop(config_path: str):
             "model": model_cfg,
             "method": method_cfg,
             "budget": budget_cfg,
-            "policy": policy_cfg,
             "output": output_cfg,
             "logging": logging_cfg,
             "debug": debug_cfg,
             "config_path": config_path,
+            "policy_constants": {
+                "MAX_CALLS": MAX_CALLS,
+                "MAX_PLAN_CYCLES": MAX_PLAN_CYCLES,
+                "MAX_REPAIR_CALLS": MAX_REPAIR_CALLS,
+                "PLANNING_FAILURE_LIMIT": PLANNING_FAILURE_LIMIT,
+                "STAGNATION_K": STAGNATION_K,
+                "NAMEERROR_K": NAMEERROR_K,
+                "HIGH_VALUE_ERRORS": list(HIGH_VALUE_ERRORS),
+            },
         },
         os.path.join(output_dir, "config.json"),
     )
@@ -895,8 +788,8 @@ def run_policy_loop(config_path: str):
         model_name=model_name,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
-        backend=model_cfg.get("backend", "hf"),   # 추가
-        api_base=model_cfg.get("api_base", None), # 추가
+        backend=model_cfg.get("backend", "hf"),
+        api_base=model_cfg.get("api_base", None),
     )
     print("✅ 모델 로딩 완료")
 
@@ -908,36 +801,40 @@ def run_policy_loop(config_path: str):
     samples_to_run = min(num_samples, len(task))
 
     for i in range(samples_to_run):
-        sample = task.get_sample(i)
+        sample     = task.get_sample(i)
         problem_id = sample.task_id
         trajectory_id = f"{problem_id}_run0"
 
         print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} ---")
 
-        cumulative_input_tokens = 0
-        cumulative_output_tokens = 0
-        cumulative_total_tokens = 0
-        cumulative_latency = 0.0
+        # ── per-problem accumulators ──
+        ps = PolicyState()
 
-        call_count = 0
+        cumulative_input_tokens  = 0
+        cumulative_output_tokens = 0
+        cumulative_total_tokens  = 0
+        cumulative_latency       = 0.0
+
         num_exec_fail = 0
         num_test_fail = 0
         transition_path: List[str] = []
 
         final_attempt_record = None
-        final_exec_result = None
-        recovered_by = None
-        stop_reason = None
+        final_exec_result    = None
+        recovered_by         = None
+        stop_reason          = None
 
-        previous_code = None
-        planner_output = None
-        history: List[StepRecord] = []
+        previous_code   = None
+        planner_output  = None
 
-        step_id = 0
+        step_id     = 0
         attempt_idx = 0
 
         initial_prompt = adapter.build_initial_prompt(sample)
 
+        # ──────────────────────────────────────────────────
+        # Step 0: Generate
+        # ──────────────────────────────────────────────────
         try:
             gen = _run_generate_step(
                 model=model,
@@ -952,7 +849,6 @@ def run_policy_loop(config_path: str):
             )
         except Exception as e:
             print(f"  ⚠️ 모델 호출 실패 (토큰 초과 등), 스킵: {e}")
-            _overflow_record = _make_empty_output_attempt_record(f"TokenOverflow: {str(e)[:300]}")
             eval_results.append(SimpleNamespace(
                 status="TOKEN_OVERFLOW", passed=False,
                 exec_ok=False, test_pass=False,
@@ -965,7 +861,8 @@ def run_policy_loop(config_path: str):
                 "problem_id": problem_id, "method": method_name,
                 "trajectory_id": trajectory_id,
                 "num_steps": 0, "call_count": 0,
-                "final_status": "TOKEN_OVERFLOW", "failure_family": "TOKEN_OVERFLOW",
+                "final_status": "TOKEN_OVERFLOW",
+                "failure_family": "TOKEN_OVERFLOW",
                 "final_tests_passed": 0, "final_tests_total": 0,
                 "total_tokens": 0, "total_latency": 0,
                 "num_exec_fail": 0, "num_test_fail": 0,
@@ -974,18 +871,16 @@ def run_policy_loop(config_path: str):
             })
             continue
 
-        call_count += 1
-        cumulative_input_tokens += gen["input_tokens"]
+        cumulative_input_tokens  += gen["input_tokens"]
         cumulative_output_tokens += gen["output_tokens"]
-        cumulative_total_tokens += gen["total_tokens"]
-        cumulative_latency += gen["latency_sec"]
+        cumulative_total_tokens  += gen["total_tokens"]
+        cumulative_latency       += gen["latency_sec"]
 
         final_attempt_record = gen["attempt_record"]
-        final_exec_result = gen["exec_result"]
-        previous_code = gen["generated_code"]
+        final_exec_result    = gen["exec_result"]
+        previous_code        = gen["generated_code"]
 
-        current_status = final_attempt_record.status
-        current_fail = coarse_fail(current_status)
+        current_fail  = coarse_fail(final_attempt_record.status)
         current_error = normalize_error_type(final_attempt_record.error_type)
         transition_path.append(f"{current_fail}:{current_error}")
 
@@ -994,7 +889,8 @@ def run_policy_loop(config_path: str):
         if current_fail == "TEST_FAIL":
             num_test_fail += 1
 
-        history.append(StepRecord(fail=current_fail, error_type=current_error, action="generate"))
+        # update policy state after generate
+        ps.after_action("generate", final_attempt_record)
 
         _append_step_log(
             step_logs,
@@ -1005,7 +901,7 @@ def run_policy_loop(config_path: str):
             method_name=method_name,
             trajectory_id=trajectory_id,
             step_id=step_id,
-            call_index=call_count - 1,
+            call_index=ps.call_count - 1,
             stage="generate",
             policy_action="generate",
             policy_state=None,
@@ -1021,14 +917,14 @@ def run_policy_loop(config_path: str):
             latency_sec=gen["latency_sec"],
         )
 
-        pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
+        pretty = "✅ PASS" if final_attempt_record.passed else f"❌ {final_attempt_record.status}"
         print(f"  generate: {pretty}")
 
         _collect_failure_example(
             failure_examples,
             problem_id=problem_id,
             attempt_idx=attempt_idx,
-            status=current_status,
+            status=final_attempt_record.status,
             prompt=initial_prompt,
             raw_text=gen["raw_text"],
             generated_code=gen["generated_code"],
@@ -1038,349 +934,261 @@ def run_policy_loop(config_path: str):
         )
 
         attempt_idx += 1
-        step_id += 1
+        step_id     += 1
 
         if final_attempt_record.passed:
             recovered_by = "generate"
-        else:
-            forced_next_action = None
 
-            while not final_attempt_record.passed:
-                if call_count >= max_calls:
-                    stop_reason = "max_calls_reached"
-                    print(f"  stop: 🛑 {stop_reason}")
-                    break
+        # ──────────────────────────────────────────────────
+        # Main refinement loop
+        # ──────────────────────────────────────────────────
+        while not final_attempt_record.passed:
 
-                next_action = forced_next_action
-                forced_next_action = None
+            action = ps.select_action(final_attempt_record)
 
-                if next_action is None:
-                    next_action, maybe_stop_reason = choose_next_policy_action(
-                        history=history,
-                        current_fail=current_fail,
-                        current_error=current_error,
-                        call_count=call_count,
-                        max_calls=max_calls,
-                        policy_cfg=policy_cfg,
-                    )
-                    if next_action == "stop":
-                        stop_reason = maybe_stop_reason
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-
-                if next_action == "plan":
-                    # plan은 planner 1 call + plan_code 1 call = 2 calls 필요
-                    if call_count + 2 > max_calls:
-                        stop_reason = "max_calls_reached_before_plan_cycle"
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-
-                    if not plan_available(history, policy_cfg):
-                        stop_reason = "plan_budget_exhausted"
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-
-                    try:
-                        out = _run_plan_then_code_step(
-                            model=model,
-                            adapter=adapter,
-                            sample=sample,
-                            method_name=method_name,
-                            model_name=model_name,
-                            planner_max_tokens=planner_max_tokens,
-                            coder_max_tokens=coder_max_tokens,
-                            debug_mode=debug_mode,
-                            attempt_idx=attempt_idx,
-                            previous_plan=planner_output,
-                            failing_status=final_attempt_record.status,
-                            error_type=final_attempt_record.error_type,
-                            error_message=final_attempt_record.error_message,
-                            previous_code=previous_code,
-                        )
-                    except Exception as e:
-                        print(f"  ⚠️ plan 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
-                        stop_reason = "token_overflow"
-                        transition_path.append("TOKEN_OVERFLOW")
-                        break
-
-                    call_count += 1
-                    cumulative_input_tokens += out["plan_input_tokens"]
-                    cumulative_output_tokens += out["plan_output_tokens"]
-                    cumulative_total_tokens += out["plan_total_tokens"]
-                    cumulative_latency += out["plan_latency"]
-
-                    _append_step_log(
-                        step_logs,
-                        save_step_level=save_step_level,
-                        run_id=run_id,
-                        dataset_name=dataset_name,
-                        problem_id=problem_id,
-                        method_name=method_name,
-                        trajectory_id=trajectory_id,
-                        step_id=step_id,
-                        call_index=call_count - 1,
-                        stage="plan",
-                        policy_action="plan",
-                        policy_state=_make_policy_state_for_log(history),
-                        policy_stop=False,
-                        policy_stop_reason=None,
-                        sample=sample,
-                        save_code=save_code,
-                        generated_code=None,
-                        attempt_record=SimpleNamespace(
-                            status="PLAN_DONE",
-                            exec_ok=None,
-                            test_pass=None,
-                            error_type=None,
-                            error_stage=None,
-                            error_message=None,
-                            tests_passed=None,
-                            tests_total=None,
-                        ),
-                        input_tokens=out["plan_input_tokens"],
-                        output_tokens=out["plan_output_tokens"],
-                        total_tokens=out["plan_total_tokens"],
-                        latency_sec=out["plan_latency"],
-                        planner_output=out["planner_output"],
-                        is_planner=True,
-                    )
-                    transition_path.append("PLAN_DONE")
-                    step_id += 1
-
-                    call_count += 1
-                    cumulative_input_tokens += out["input_tokens"]
-                    cumulative_output_tokens += out["output_tokens"]
-                    cumulative_total_tokens += out["total_tokens"]
-                    cumulative_latency += out["latency_sec"]
-
-                    final_attempt_record = out["attempt_record"]
-                    final_exec_result = out["exec_result"]
-                    previous_code = out["generated_code"]
-                    planner_output = out["planner_output"]
-
-                    current_status = final_attempt_record.status
-                    current_fail = coarse_fail(current_status)
-                    current_error = normalize_error_type(final_attempt_record.error_type)
-                    transition_path.append(f"{current_fail}:{current_error}")
-
-                    if current_fail == "EXEC_FAIL":
-                        num_exec_fail += 1
-                    if current_fail == "TEST_FAIL":
-                        num_test_fail += 1
-
-                    history.append(StepRecord(fail=current_fail, error_type=current_error, action="plan"))
-
-                    _append_step_log(
-                        step_logs,
-                        save_step_level=save_step_level,
-                        run_id=run_id,
-                        dataset_name=dataset_name,
-                        problem_id=problem_id,
-                        method_name=method_name,
-                        trajectory_id=trajectory_id,
-                        step_id=step_id,
-                        call_index=call_count - 1,
-                        stage="plan_code",
-                        policy_action="plan",
-                        policy_state=_make_policy_state_for_log(history[:-1]),
-                        policy_stop=False,
-                        policy_stop_reason=None,
-                        sample=sample,
-                        save_code=save_code,
-                        generated_code=out["generated_code"],
-                        attempt_record=final_attempt_record,
-                        input_tokens=out["input_tokens"],
-                        output_tokens=out["output_tokens"],
-                        total_tokens=out["total_tokens"],
-                        latency_sec=out["latency_sec"],
-                    )
-                    step_id += 1
-
-                    pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  plan_code: {pretty}")
-
-                    _collect_failure_example(
-                        failure_examples,
-                        problem_id=problem_id,
-                        attempt_idx=attempt_idx,
-                        status=current_status,
-                        prompt=out["coder_prompt"],
-                        raw_text=out["raw_text"],
-                        generated_code=out["generated_code"],
-                        error_type=final_attempt_record.error_type,
-                        error_stage=final_attempt_record.error_stage,
-                        error_message=final_attempt_record.error_message,
-                    )
-                    attempt_idx += 1
-
-                    if final_attempt_record.passed:
-                        recovered_by = "plan_code"
-                        break
-
-                    # Re-evaluate after a failed planning cycle. This prevents
-                    # AssertionError from triggering unconditional re-planning and
-                    # lets the transition-aware policy decide repair / plan / stop.
-                    next_action, maybe_stop_reason = choose_next_policy_action(
-                        history=history,
-                        current_fail=current_fail,
-                        current_error=current_error,
-                        call_count=call_count,
-                        max_calls=max_calls,
-                        policy_cfg=policy_cfg,
-                    )
-                    if next_action == "stop":
-                        stop_reason = maybe_stop_reason
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-                    if next_action == "plan":
-                        forced_next_action = "plan"
-                        continue
-
-                repair_count = 0
-                while repair_count < max_repair_steps and not final_attempt_record.passed:
-                    if call_count >= max_calls:
-                        stop_reason = "max_calls_reached"
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-
-                    try:
-                        out = _run_repair_step(
-                            model=model,
-                            adapter=adapter,
-                            sample=sample,
-                            method_name=method_name,
-                            model_name=model_name,
-                            repair_max_tokens=repair_max_tokens,
-                            previous_code=previous_code,
-                            error_message=final_attempt_record.error_message,
-                            failing_status=final_attempt_record.status,
-                            planner_output=planner_output,
-                            debug_mode=debug_mode,
-                            attempt_idx=attempt_idx,
-                        )
-                    except Exception as e:
-                        print(f"  ⚠️ repair 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
-                        stop_reason = "token_overflow"
-                        transition_path.append("TOKEN_OVERFLOW")
-                        break
-
-                    call_count += 1
-                    cumulative_input_tokens += out["input_tokens"]
-                    cumulative_output_tokens += out["output_tokens"]
-                    cumulative_total_tokens += out["total_tokens"]
-                    cumulative_latency += out["latency_sec"]
-
-                    final_attempt_record = out["attempt_record"]
-                    final_exec_result = out["exec_result"]
-                    previous_code = out["generated_code"]
-
-                    current_status = final_attempt_record.status
-                    current_fail = coarse_fail(current_status)
-                    current_error = normalize_error_type(final_attempt_record.error_type)
-                    transition_path.append(f"{current_fail}:{current_error}")
-
-                    if current_fail == "EXEC_FAIL":
-                        num_exec_fail += 1
-                    if current_fail == "TEST_FAIL":
-                        num_test_fail += 1
-
-                    history.append(StepRecord(fail=current_fail, error_type=current_error, action="repair"))
-
-                    _append_step_log(
-                        step_logs,
-                        save_step_level=save_step_level,
-                        run_id=run_id,
-                        dataset_name=dataset_name,
-                        problem_id=problem_id,
-                        method_name=method_name,
-                        trajectory_id=trajectory_id,
-                        step_id=step_id,
-                        call_index=call_count - 1,
-                        stage="repair",
-                        policy_action="repair",
-                        policy_state=_make_policy_state_for_log(history[:-1]),
-                        policy_stop=False,
-                        policy_stop_reason=None,
-                        sample=sample,
-                        save_code=save_code,
-                        generated_code=out["generated_code"],
-                        attempt_record=final_attempt_record,
-                        input_tokens=out["input_tokens"],
-                        output_tokens=out["output_tokens"],
-                        total_tokens=out["total_tokens"],
-                        latency_sec=out["latency_sec"],
-                        is_repair=True,
-                        is_retry=repair_count > 0,
-                    )
-                    step_id += 1
-
-                    pretty = "✅ PASS" if current_status == "PASS" else f"❌ {current_status}"
-                    print(f"  repair: {pretty}")
-
-                    _collect_failure_example(
-                        failure_examples,
-                        problem_id=problem_id,
-                        attempt_idx=attempt_idx,
-                        status=current_status,
-                        prompt=out["prompt"],
-                        raw_text=out["raw_text"],
-                        generated_code=out["generated_code"],
-                        error_type=final_attempt_record.error_type,
-                        error_stage=final_attempt_record.error_stage,
-                        error_message=final_attempt_record.error_message,
-                    )
-                    attempt_idx += 1
-                    repair_count += 1
-
-                    if final_attempt_record.passed:
-                        recovered_by = "repair"
-                        break
-
-                    next_action, maybe_stop_reason = choose_next_policy_action(
-                        history=history,
-                        current_fail=current_fail,
-                        current_error=current_error,
-                        call_count=call_count,
-                        max_calls=max_calls,
-                        policy_cfg=policy_cfg,
-                    )
-                    if next_action == "stop":
-                        stop_reason = maybe_stop_reason
-                        print(f"  stop: 🛑 {stop_reason}")
-                        break
-                    if next_action == "plan":
-                        forced_next_action = "plan"
-                        break
-                    # Otherwise keep repairing within max_repair_steps.
-
-                if stop_reason is not None or final_attempt_record.passed:
-                    break
-
-                next_action, maybe_stop_reason = choose_next_policy_action(
-                    history=history,
-                    current_fail=current_fail,
-                    current_error=current_error,
-                    call_count=call_count,
-                    max_calls=max_calls,
-                    policy_cfg=policy_cfg,
+            if action == "terminate":
+                stop_reason = (
+                    "max_calls_reached"
+                    if ps.call_count >= max_calls
+                    else "policy_terminate"
                 )
-                if next_action == "stop":
-                    stop_reason = maybe_stop_reason
-                    print(f"  stop: 🛑 {stop_reason}")
-                    break
-                if next_action == "plan":
-                    forced_next_action = "plan"
-                    continue
+                print(f"  stop: 🛑 {stop_reason}")
+                break
 
-                continue
+            # ── Plan ──────────────────────────────────────
+            if action == "plan":
+                try:
+                    out = _run_plan_then_code_step(
+                        model=model,
+                        adapter=adapter,
+                        sample=sample,
+                        method_name=method_name,
+                        model_name=model_name,
+                        planner_max_tokens=planner_max_tokens,
+                        coder_max_tokens=coder_max_tokens,
+                        debug_mode=debug_mode,
+                        attempt_idx=attempt_idx,
+                        previous_plan=planner_output,
+                        failing_status=final_attempt_record.status,
+                        error_type=final_attempt_record.error_type,
+                        error_message=final_attempt_record.error_message,
+                        previous_code=previous_code,
+                    )
+                except Exception as e:
+                    print(f"  ⚠️ plan 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    stop_reason = "token_overflow"
+                    transition_path.append("TOKEN_OVERFLOW")
+                    break
+
+                # planner call log
+                cumulative_input_tokens  += out["plan_input_tokens"]
+                cumulative_output_tokens += out["plan_output_tokens"]
+                cumulative_total_tokens  += out["plan_total_tokens"]
+                cumulative_latency       += out["plan_latency"]
+
+                _append_step_log(
+                    step_logs,
+                    save_step_level=save_step_level,
+                    run_id=run_id,
+                    dataset_name=dataset_name,
+                    problem_id=problem_id,
+                    method_name=method_name,
+                    trajectory_id=trajectory_id,
+                    step_id=step_id,
+                    call_index=ps.call_count,          # before after_action
+                    stage="plan",
+                    policy_action="plan",
+                    policy_state=_make_policy_state_snapshot(ps),
+                    policy_stop=False,
+                    policy_stop_reason=None,
+                    sample=sample,
+                    save_code=save_code,
+                    generated_code=None,
+                    attempt_record=SimpleNamespace(
+                        status="PLAN_DONE",
+                        exec_ok=None, test_pass=None,
+                        error_type=None, error_stage=None,
+                        error_message=None,
+                        tests_passed=None, tests_total=None,
+                    ),
+                    input_tokens=out["plan_input_tokens"],
+                    output_tokens=out["plan_output_tokens"],
+                    total_tokens=out["plan_total_tokens"],
+                    latency_sec=out["plan_latency"],
+                    planner_output=out["planner_output"],
+                    is_planner=True,
+                )
+                transition_path.append("PLAN_DONE")
+                step_id += 1
+
+                # coder call log
+                cumulative_input_tokens  += out["input_tokens"]
+                cumulative_output_tokens += out["output_tokens"]
+                cumulative_total_tokens  += out["total_tokens"]
+                cumulative_latency       += out["latency_sec"]
+
+                final_attempt_record = out["attempt_record"]
+                final_exec_result    = out["exec_result"]
+                previous_code        = out["generated_code"]
+                planner_output       = out["planner_output"]
+
+                current_fail  = coarse_fail(final_attempt_record.status)
+                current_error = normalize_error_type(final_attempt_record.error_type)
+                transition_path.append(f"{current_fail}:{current_error}")
+
+                if current_fail == "EXEC_FAIL":
+                    num_exec_fail += 1
+                if current_fail == "TEST_FAIL":
+                    num_test_fail += 1
+
+                ps.after_action("plan", final_attempt_record)
+
+                _append_step_log(
+                    step_logs,
+                    save_step_level=save_step_level,
+                    run_id=run_id,
+                    dataset_name=dataset_name,
+                    problem_id=problem_id,
+                    method_name=method_name,
+                    trajectory_id=trajectory_id,
+                    step_id=step_id,
+                    call_index=ps.call_count - 1,
+                    stage="plan_code",
+                    policy_action="plan",
+                    policy_state=_make_policy_state_snapshot(ps),
+                    policy_stop=False,
+                    policy_stop_reason=None,
+                    sample=sample,
+                    save_code=save_code,
+                    generated_code=out["generated_code"],
+                    attempt_record=final_attempt_record,
+                    input_tokens=out["input_tokens"],
+                    output_tokens=out["output_tokens"],
+                    total_tokens=out["total_tokens"],
+                    latency_sec=out["latency_sec"],
+                )
+                step_id += 1
+
+                pretty = "✅ PASS" if final_attempt_record.passed else f"❌ {final_attempt_record.status}"
+                print(f"  plan_code: {pretty}")
+
+                _collect_failure_example(
+                    failure_examples,
+                    problem_id=problem_id,
+                    attempt_idx=attempt_idx,
+                    status=final_attempt_record.status,
+                    prompt=out["coder_prompt"],
+                    raw_text=out["raw_text"],
+                    generated_code=out["generated_code"],
+                    error_type=final_attempt_record.error_type,
+                    error_stage=final_attempt_record.error_stage,
+                    error_message=final_attempt_record.error_message,
+                )
+                attempt_idx += 1
+
+                if final_attempt_record.passed:
+                    recovered_by = "plan_code"
+
+            # ── Repair ────────────────────────────────────
+            elif action == "repair":
+                try:
+                    out = _run_repair_step(
+                        model=model,
+                        adapter=adapter,
+                        sample=sample,
+                        method_name=method_name,
+                        model_name=model_name,
+                        repair_max_tokens=repair_max_tokens,
+                        previous_code=previous_code,
+                        error_message=final_attempt_record.error_message,
+                        failing_status=final_attempt_record.status,
+                        planner_output=planner_output,
+                        debug_mode=debug_mode,
+                        attempt_idx=attempt_idx,
+                    )
+                except Exception as e:
+                    print(f"  ⚠️ repair 모델 호출 실패 (토큰 초과 등), 이 문제 중단: {e}")
+                    stop_reason = "token_overflow"
+                    transition_path.append("TOKEN_OVERFLOW")
+                    break
+
+                cumulative_input_tokens  += out["input_tokens"]
+                cumulative_output_tokens += out["output_tokens"]
+                cumulative_total_tokens  += out["total_tokens"]
+                cumulative_latency       += out["latency_sec"]
+
+                final_attempt_record = out["attempt_record"]
+                final_exec_result    = out["exec_result"]
+                previous_code        = out["generated_code"]
+
+                current_fail  = coarse_fail(final_attempt_record.status)
+                current_error = normalize_error_type(final_attempt_record.error_type)
+                transition_path.append(f"{current_fail}:{current_error}")
+
+                if current_fail == "EXEC_FAIL":
+                    num_exec_fail += 1
+                if current_fail == "TEST_FAIL":
+                    num_test_fail += 1
+
+                ps.after_action("repair", final_attempt_record)
+
+                _append_step_log(
+                    step_logs,
+                    save_step_level=save_step_level,
+                    run_id=run_id,
+                    dataset_name=dataset_name,
+                    problem_id=problem_id,
+                    method_name=method_name,
+                    trajectory_id=trajectory_id,
+                    step_id=step_id,
+                    call_index=ps.call_count - 1,
+                    stage="repair",
+                    policy_action="repair",
+                    policy_state=_make_policy_state_snapshot(ps),
+                    policy_stop=False,
+                    policy_stop_reason=None,
+                    sample=sample,
+                    save_code=save_code,
+                    generated_code=out["generated_code"],
+                    attempt_record=final_attempt_record,
+                    input_tokens=out["input_tokens"],
+                    output_tokens=out["output_tokens"],
+                    total_tokens=out["total_tokens"],
+                    latency_sec=out["latency_sec"],
+                    is_repair=True,
+                    is_retry=ps.repair_call_count > 1,
+                )
+                step_id += 1
+
+                pretty = "✅ PASS" if final_attempt_record.passed else f"❌ {final_attempt_record.status}"
+                print(f"  repair [{ps.repair_call_count}/{MAX_REPAIR_CALLS}]: {pretty}")
+
+                _collect_failure_example(
+                    failure_examples,
+                    problem_id=problem_id,
+                    attempt_idx=attempt_idx,
+                    status=final_attempt_record.status,
+                    prompt=out["prompt"],
+                    raw_text=out["raw_text"],
+                    generated_code=out["generated_code"],
+                    error_type=final_attempt_record.error_type,
+                    error_stage=final_attempt_record.error_stage,
+                    error_message=final_attempt_record.error_message,
+                )
+                attempt_idx += 1
+
+                if final_attempt_record.passed:
+                    recovered_by = "repair"
+
+        # ── end while ─────────────────────────────────────
 
         if final_exec_result is None:
             final_exec_result = final_attempt_record
 
-        setattr(final_exec_result, "num_calls", call_count)
+        setattr(final_exec_result, "num_calls", ps.call_count)
         eval_results.append(final_exec_result)
 
-        final_status = final_attempt_record.status
+        final_status   = final_attempt_record.status
         failure_family = "PASS" if final_status == "PASS" else coarse_fail(final_status)
 
         trajectory_entry = {
@@ -1389,8 +1197,8 @@ def run_policy_loop(config_path: str):
             "problem_id": problem_id,
             "method": method_name,
             "trajectory_id": trajectory_id,
-            "num_steps": call_count,
-            "call_count": call_count,
+            "num_steps": ps.call_count,
+            "call_count": ps.call_count,
             "final_status": final_status,
             "failure_family": failure_family,
             "final_tests_passed": final_attempt_record.tests_passed,
@@ -1402,29 +1210,21 @@ def run_policy_loop(config_path: str):
             "num_exec_fail": num_exec_fail,
             "num_test_fail": num_test_fail,
             "transition_path": transition_path,
-            "used_plan": any(x["stage"] == "plan" for x in step_logs if x["trajectory_id"] == trajectory_id),
-            "used_repair": any(x["stage"] == "repair" for x in step_logs if x["trajectory_id"] == trajectory_id),
+            "used_plan":   any(s["stage"] == "plan"   for s in step_logs if s["trajectory_id"] == trajectory_id),
+            "used_repair": any(s["stage"] == "repair" for s in step_logs if s["trajectory_id"] == trajectory_id),
             "recovered_by": recovered_by,
             "stopped_by_policy": stop_reason is not None and not final_attempt_record.passed,
             "stop_reason": stop_reason,
-            "num_plan_calls": num_plan_calls(history),
+            "num_plan_calls": ps.plan_cycle_count,
+            "num_repair_calls": ps.repair_call_count,
             "budget_used": {
                 "tokens": cumulative_total_tokens,
-                "calls": call_count,
+                "calls": ps.call_count,
                 "latency": cumulative_latency,
             },
-            "planning_cycle_count": sum(
-                1 for s in step_logs
-                if s.get("trajectory_id") == trajectory_id and s.get("stage") == "plan"
-            ),
-            "planning_cycle_call_cost": 2 * sum(
-                1 for s in step_logs
-                if s.get("trajectory_id") == trajectory_id and s.get("stage") == "plan"
-            ),
-            "repair_call_count": sum(
-                1 for s in step_logs
-                if s.get("trajectory_id") == trajectory_id and s.get("stage") == "repair"
-            ),
+            "planning_cycle_count": ps.plan_cycle_count,
+            "planning_cycle_call_cost": ps.plan_cycle_count * 2,
+            "repair_call_count": ps.repair_call_count,
         }
 
         if save_trajectory_level:
@@ -1432,10 +1232,10 @@ def run_policy_loop(config_path: str):
 
         gc.collect()
 
-    # ── 5. 결과 요약 ──
+    # ── Summary ───────────────────────────────────────────
     summary = summarize_phase1_results(eval_results, k=max_calls)
     success_key = f"success@{max_calls}"
-    
+
     print(f"\n{'=' * 60}")
     print("📊 결과 요약")
     print(f"  총 문제: {summary['total']}")
@@ -1455,72 +1255,29 @@ def run_policy_loop(config_path: str):
 
     total = len(trajectory_logs)
 
-    # -----------------------------
-    # problem-level stats
-    # -----------------------------
-    n_used_plan_problems = sum(1 for t in trajectory_logs if t.get("used_plan", False))
-    n_plan_recovered_problems = sum(
-        1 for t in trajectory_logs
-        if t.get("recovered_by") == "plan_code"
-    )
-
+    n_used_plan_problems   = sum(1 for t in trajectory_logs if t.get("used_plan", False))
+    n_plan_recovered       = sum(1 for t in trajectory_logs if t.get("recovered_by") == "plan_code")
     n_used_repair_problems = sum(1 for t in trajectory_logs if t.get("used_repair", False))
-    n_repair_recovered_problems = sum(
-        1 for t in trajectory_logs
-        if t.get("recovered_by") == "repair"
-    )
+    n_repair_recovered     = sum(1 for t in trajectory_logs if t.get("recovered_by") == "repair")
 
-    # -----------------------------
-    # call-level stats
-    # -----------------------------
-    n_planning_cycles = sum(1 for s in step_logs if s.get("stage") == "plan")
-    n_planning_code_successes = sum(
-        1 for s in step_logs
-        if s.get("stage") == "plan_code" and s.get("status") == "PASS"
-    )
-    planning_cycle_call_cost = n_planning_cycles * 2
-    planning_cycle_success_rate = (
-        n_planning_code_successes / n_planning_cycles
-        if n_planning_cycles > 0 else 0.0
-    )
-    n_repair_calls = sum(1 for s in step_logs if s.get("stage") == "repair")
-    n_repair_call_successes = sum(
-        1 for s in step_logs
-        if s.get("stage") == "repair" and s.get("status") == "PASS"
-    )
+    n_planning_cycles         = sum(1 for s in step_logs if s.get("stage") == "plan")
+    n_planning_code_successes = sum(1 for s in step_logs if s.get("stage") == "plan_code" and s.get("status") == "PASS")
+    planning_cycle_call_cost  = n_planning_cycles * 2
+    planning_cycle_success_rate = (n_planning_code_successes / n_planning_cycles) if n_planning_cycles > 0 else 0.0
 
-    print(
-        f"  [problem-level] plan 사용: {n_used_plan_problems}/{total} ({n_used_plan_problems/total*100:.1f}%)"
-        if total > 0 else "  [problem-level] plan 사용: 0/0"
-    )
-    print(
-        f"  [problem-level] plan 복구 성공: {n_plan_recovered_problems}/{n_used_plan_problems} ({n_plan_recovered_problems/n_used_plan_problems*100:.1f}%)"
-        if n_used_plan_problems > 0 else "  [problem-level] plan 복구 성공: 0/0"
-    )
-    print(
-        f"  [problem-level] repair 사용: {n_used_repair_problems}/{total} ({n_used_repair_problems/total*100:.1f}%)"
-        if total > 0 else "  [problem-level] repair 사용: 0/0"
-    )
-    print(
-        f"  [problem-level] repair 복구 성공: {n_repair_recovered_problems}/{n_used_repair_problems} ({n_repair_recovered_problems/n_used_repair_problems*100:.1f}%)"
-        if n_used_repair_problems > 0 else "  [problem-level] repair 복구 성공: 0/0"
-    )
-    print(
-        f"  [call-level] planning-cycle 사용: {n_planning_cycles} cycles "
-        f"({planning_cycle_call_cost} calls), "
-        f"성공: {n_planning_code_successes}/{n_planning_cycles} "
-        f"({planning_cycle_success_rate*100:.1f}%)"
-        if n_planning_cycles > 0
-        else "  [call-level] planning-cycle 사용: 0 cycles (0 calls), 성공: 0/0"
-    )
-    
-    print(
-        f"  [call-level] repair 호출: {n_repair_calls}, "
-        f"성공: {n_repair_call_successes}/{n_repair_calls} "
-        f"({(n_repair_call_successes/n_repair_calls*100):.1f}%)"
-        if n_repair_calls > 0
-        else "  [call-level] repair 호출: 0, 성공: 0/0"
-    )
+    n_repair_calls         = sum(1 for s in step_logs if s.get("stage") == "repair")
+    n_repair_call_successes = sum(1 for s in step_logs if s.get("stage") == "repair" and s.get("status") == "PASS")
+
+    def _pct(a, b): return f"{a/b*100:.1f}%" if b > 0 else "0/0"
+
+    print(f"  [problem] plan 사용:     {n_used_plan_problems}/{total} ({_pct(n_used_plan_problems, total)})")
+    print(f"  [problem] plan 복구:     {n_plan_recovered}/{n_used_plan_problems} ({_pct(n_plan_recovered, n_used_plan_problems)})")
+    print(f"  [problem] repair 사용:   {n_used_repair_problems}/{total} ({_pct(n_used_repair_problems, total)})")
+    print(f"  [problem] repair 복구:   {n_repair_recovered}/{n_used_repair_problems} ({_pct(n_repair_recovered, n_used_repair_problems)})")
+    print(f"  [call] planning cycles:  {n_planning_cycles} ({planning_cycle_call_cost} calls) "
+          f"성공 {n_planning_code_successes}/{n_planning_cycles} ({_pct(n_planning_code_successes, n_planning_cycles)})")
+    print(f"  [call] repair calls:     {n_repair_calls} "
+          f"성공 {n_repair_call_successes}/{n_repair_calls} ({_pct(n_repair_call_successes, n_repair_calls)})")
     print(f"{'=' * 60}")
 
     if save_problem_summary:
@@ -1539,22 +1296,24 @@ def run_policy_loop(config_path: str):
                 "execution_success_rate": summary["execution_success_rate"],
                 "conditional_success": summary["conditional_success"],
                 "extra_summary": extra_summary,
+                "policy_constants": {
+                    "MAX_CALLS": MAX_CALLS,
+                    "MAX_PLAN_CYCLES": MAX_PLAN_CYCLES,
+                    "MAX_REPAIR_CALLS": MAX_REPAIR_CALLS,
+                    "PLANNING_FAILURE_LIMIT": PLANNING_FAILURE_LIMIT,
+                    "STAGNATION_K": STAGNATION_K,
+                    "NAMEERROR_K": NAMEERROR_K,
+                },
                 "policy_stats": {
                     "problem_level": {
                         "plan_used_problems": n_used_plan_problems,
                         "plan_problem_usage_rate": n_used_plan_problems / total if total > 0 else 0.0,
-                        "plan_recovered_problems": n_plan_recovered_problems,
-                        "plan_problem_recovery_rate": (
-                            n_plan_recovered_problems / n_used_plan_problems
-                            if n_used_plan_problems > 0 else 0.0
-                        ),
+                        "plan_recovered_problems": n_plan_recovered,
+                        "plan_problem_recovery_rate": n_plan_recovered / n_used_plan_problems if n_used_plan_problems > 0 else 0.0,
                         "repair_used_problems": n_used_repair_problems,
                         "repair_problem_usage_rate": n_used_repair_problems / total if total > 0 else 0.0,
-                        "repair_recovered_problems": n_repair_recovered_problems,
-                        "repair_problem_recovery_rate": (
-                            n_repair_recovered_problems / n_used_repair_problems
-                            if n_used_repair_problems > 0 else 0.0
-                        ),
+                        "repair_recovered_problems": n_repair_recovered,
+                        "repair_problem_recovery_rate": n_repair_recovered / n_used_repair_problems if n_used_repair_problems > 0 else 0.0,
                     },
                     "call_level": {
                         "planning_cycle_count": n_planning_cycles,
@@ -1563,12 +1322,9 @@ def run_policy_loop(config_path: str):
                         "planning_cycle_success_rate": planning_cycle_success_rate,
                         "repair_call_count": n_repair_calls,
                         "repair_call_success_count": n_repair_call_successes,
-                        "repair_call_success_rate": (
-                            n_repair_call_successes / n_repair_calls
-                            if n_repair_calls > 0 else 0.0
-                        ),
+                        "repair_call_success_rate": n_repair_call_successes / n_repair_calls if n_repair_calls > 0 else 0.0,
                     },
-                }
+                },
             },
             os.path.join(output_dir, "summary.json"),
         )
@@ -1579,23 +1335,18 @@ def run_policy_loop(config_path: str):
         save_results_jsonl(trajectory_logs, os.path.join(output_dir, "trajectory_logs.jsonl"))
     if save_run_analysis:
         save_result(
-            {
-                "run_id": run_id,
-                "dataset": dataset_name,
-                "method": method_name,
-            },
+            {"run_id": run_id, "dataset": dataset_name, "method": method_name},
             os.path.join(output_dir, "analysis.json"),
         )
-        
-    if save_failure_examples and failure_examples :
+    if save_failure_examples and failure_examples:
         save_result(failure_examples, os.path.join(output_dir, "failure_examples.json"))
 
-    print("✅ policy_loop 완료")
+    print("✅ policy_loop_main 완료")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python -m src.orchestration.policy_loop <config.yaml>")
+        print("Usage: python -m src.orchestration.policy_loop_main <config.yaml>")
         sys.exit(1)
 
     run_policy_loop(sys.argv[1])

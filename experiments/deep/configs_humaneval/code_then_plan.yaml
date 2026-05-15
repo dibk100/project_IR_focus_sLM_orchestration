@@ -1,8 +1,8 @@
 # 사용법:
-# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/llama/configs_humaneval/code_then_plan.yaml
+# PYTHONPATH=. python -m src.orchestration.code_then_plan experiments/deep/configs_humaneval/code_then_plan.yaml
 
 run:
-  run_id: "phase3_llama318b_humaneval_code_then_plan"
+  run_id: "deepcoder7b_humaneval_code_then_plan"
   seed: 42
 
 dataset:
@@ -10,18 +10,18 @@ dataset:
   num_samples: 164
 
 model:
-  name: "meta-llama/Llama-3.1-8B-Instruct"
-  backend: "hf"          # "hf" | "vllm_server"
+  name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+  backend: "vllm_server"          # "hf" | "vllm_server"
   api_base: "http://localhost:8000/v1"
   max_new_tokens: 512
   temperature: 0.2
   
   planner:
-    name: "meta-llama/Llama-3.1-8B-Instruct"
+    name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
     max_new_tokens: 256
     temperature: 0.2
   coder:
-    name: "meta-llama/Llama-3.1-8B-Instruct"
+    name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
     max_new_tokens: 512
     temperature: 0.2
 
@@ -32,10 +32,10 @@ budget:
   max_calls: 20
 
 output:
-  dir: "results/llama318b/humaneval/code_then_plan"
+  dir: "results/deepcoder7b/humaneval/code_then_plan"
 
 logging:
-  save_step_level: true 
+  save_step_level: true
   save_trajectory_level: true
   save_problem_summary: true
   save_run_analysis: false

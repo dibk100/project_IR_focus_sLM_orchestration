@@ -21,7 +21,9 @@
 # "microsoft/Phi-3.5-mini-instruct"
 # "meta-llama/Llama-3.1-8B-Instruct"
 # Qwen/Qwen2.5-Coder-7B-Instruct
-MODEL="${MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}"
+# deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+# deepseek-ai/deepseek-coder-7b-instruct-v1.5
+MODEL="${MODEL:-deepseek-ai/deepseek-coder-7b-instruct-v1.5}"
 PORT="${1:-8000}"
 GPU_MEMORY_UTILIZATION="${GPU_UTIL:-0.90}"
 

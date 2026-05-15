@@ -3,68 +3,19 @@ Policy
 
 stage별 오류 유형과, 실패 반복 패턴을 기반으로, repair / replan 중 적절한 전략을 동적으로 선택하는 policy를 구현하고자 함.
 
-State = {
-    failure_type : 현재 실행 결과의 상위 실패 단계 (PASS / EXEC_FAIL / TEST_FAIL)
-    error_type : 실패의 구체적인 에러 타입 
-                 (AssertionError / SyntaxError / TypeError / ...)
-    previous_state : 직전 step의 실패 상태 
-                     (prev_failure_type, prev_error_type)
-    repetition_pattern : 동일한 (failure_type, error_type)가 
-                         연속으로 반복된 횟수
-    last_action : 직전에 수행한 전략 
-                  (generate / repair / plan)
-    plan_budget_usage : 현재까지 사용한 planning 횟수 
-                        (num_plan_calls)
-}
-
 Action = {
-    generate : 문제 입력만을 기반으로 초기 코드를 생성하는 단계
+    Apply Feedback-based Refinement:
+        regenerate code conditioned on previous failed code
+        and execution feedback
 
-    repair : 이전에 생성한 코드와 실패 피드백(error message)을 바탕으로 
-             코드를 수정하는 단계
-             
-    plan : 해결 계획 생성(re-plan : 독립 action이 아닌 두 번째 이후 plan 호출에서 사용하는 planner prompt variant)
-    plan_code : 생성된 plan을 기반으로 코드 생성 및 평가
+    Apply Planning-based Refinement:
+        generate an explicit solution plan and regenerate
+        code conditioned on the generated plan
+
+    Terminate Refinement:
+        stop iterative refinement
 }
 
-State = {
-    failure_stage:
-        current execution outcome
-        (PASS / EXEC_FAIL / TEST_FAIL)
-
-    failure_type:
-        specific observed error type
-        (AssertionError / SyntaxError / TypeError / ...)
-
-    previous_state:
-        failure state observed at the previous refinement step
-
-    stagnation_count:
-        number of consecutive repeated failures
-        without successful recovery
-
-    last_action:
-        refinement strategy applied at the previous step
-        (Generate / Repair / Planning)
-
-    num_planning_calls:
-        cumulative number of planning-based refinements
-}
-Action = {
-    Generate:
-        generate an initial program from the problem input
-
-    Repair:
-        refine the previously generated program
-        using failure feedback
-
-    Planning:
-        generate a solution plan and regenerate
-        a new program conditioned on the generated plan
-
-    Terminate:
-        stop refinement
-}
 
 1. Initial Rule
    At the first step, always execute generate.

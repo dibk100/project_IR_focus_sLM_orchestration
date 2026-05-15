@@ -1,0 +1,35 @@
+# PYTHONPATH=. python -m src.orchestration.single experiments/deep/configs_mbpp/single.yaml
+
+run:
+  run_id: "deepcoder7b_mbpp_single"
+  seed: 42
+
+dataset:
+  name: "mbpp"
+  num_samples: 257
+
+model:
+  name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
+  temperature: 0.2
+
+method:
+  name: "single_shot"
+
+budget:
+  max_calls: 1
+
+output:
+  dir: "results/deepcoder7b/mbpp/single"
+
+logging:
+  save_step_level: true
+  save_trajectory_level: true
+  save_problem_summary: true
+  save_run_analysis: true
+  save_code: false
+
+debug : 
+  mode : "run"

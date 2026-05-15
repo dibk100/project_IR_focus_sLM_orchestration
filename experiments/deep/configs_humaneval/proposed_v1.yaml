@@ -1,0 +1,55 @@
+# 사용법:
+#   PYTHONPATH=. python -m src.orchestration.policy_loop experiments/deep/configs_humaneval/proposed_v1.yaml
+
+run:
+  run_id: "deepcoder7b_humaneval_humaneval_proposed_v1"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
+  temperature: 0.2
+  
+  planner:
+    name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:    
+    name: "deepseek-ai/deepseek-coder-7b-instruct-v1.5"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "policy_loop"
+
+budget:
+  max_calls: 20
+
+policy:
+  max_plan_calls: 5
+  max_repair_steps: 10
+  stagnation_threshold : 2
+
+output:
+  dir: "results/deepcoder7b/humaneval/proposed_v1"
+
+logging:
+  save_step_level: true              # 각 step별 행동 기록
+  save_trajectory_level: true        # 전체 시도 과정
+  save_problem_summary: true     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
+  save_run_analysis: false
+  save_code: false          # 생성 코드 저장 여부
+  failure_examples: false   # 실패 예제 저장 여부
+
+debug:
+  mode: "run"

@@ -1,0 +1,56 @@
+#   PYTHONPATH=. python -m src.orchestration.policy_loop_v3 experiments/llama/configs_humaneval/proposed_main.yaml
+
+run:
+  run_id: "phase3_llama318b_humaneval_proposed_main"
+  seed: 42
+
+dataset:
+  name: "humaneval"
+  num_samples: 164
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  backend: "vllm_server"          # "hf" | "vllm_server"
+  api_base: "http://localhost:8000/v1"
+  max_new_tokens: 512
+  temperature: 0.2
+  
+  planner:
+    name: "meta-llama/Llama-3.1-8B-Instruct"
+    max_new_tokens: 256
+    temperature: 0.2
+  coder:
+    name: "meta-llama/Llama-3.1-8B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+  repair:    
+    name: "meta-llama/Llama-3.1-8B-Instruct"
+    max_new_tokens: 512
+    temperature: 0.2
+
+method:
+  name: "policy_loop"
+
+budget:
+  max_calls: 20
+
+policy:
+  max_plan_cycles: 3          # Planning 최대 3 cycles = 6 LM calls
+  max_repair_calls: 6         # Repair 전체 최대 6 LM calls (global budget)
+  stagnation_k: 3
+  nameerror_k: 2
+  planning_failure_limit: 2
+
+output:
+  dir: "results/llama318b/humaneval/proposed_main"
+
+logging:
+  save_step_level: true              # 각 step별 행동 기록
+  save_trajectory_level: true        # 전체 시도 과정
+  save_problem_summary: true     # 문제별 요약 정보 (성공 여부, 시도 횟수 등)
+  save_run_analysis: false
+  save_code: false          # 생성 코드 저장 여부
+  failure_examples: false   # 실패 예제 저장 여부
+
+debug:
+  mode: "run"
