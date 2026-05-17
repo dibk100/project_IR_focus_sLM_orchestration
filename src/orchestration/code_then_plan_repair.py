@@ -25,6 +25,7 @@ Problem
 from __future__ import annotations
 
 import gc
+import json
 import os
 import sys
 import time
@@ -130,6 +131,28 @@ def _print_sample_execution_flow(sample, prompt: str, raw_text: str, generated_c
     elif hasattr(sample, "test"):
         _print_header("SAMPLE DEBUG :: TEST CODE")
         print(_shorten(sample.test))
+
+
+def _append_jsonl(path: str, record: dict):
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _load_completed_ids(step_log_path: str) -> set:
+    completed = set()
+    if not os.path.exists(step_log_path):
+        return completed
+    with open(step_log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+                completed.add(row["problem_id"])
+            except Exception:
+                continue
+    return completed
 
 
 def _collect_failure_example(
@@ -254,6 +277,9 @@ def run_code_then_plan_repair(config_path: str):
 
     os.makedirs(output_dir, exist_ok=True)
 
+    step_log_path = os.path.join(output_dir, "step_logs.jsonl")
+    trajectory_log_path = os.path.join(output_dir, "trajectory_logs.jsonl")
+
     log_fp = None
     stdout_backup = sys.stdout
     debug_log_path = os.path.join(output_dir, "sample_debug_output.txt")
@@ -313,6 +339,35 @@ def run_code_then_plan_repair(config_path: str):
         eval_results = []
         failure_examples = {}
 
+        # ── CHECKPOINT ──────────────────────────────────────────────
+        completed_ids = _load_completed_ids(step_log_path)
+        if completed_ids:
+            print(f"⏭️  체크포인트 감지: {len(completed_ids)}개 문제 스킵")
+            if os.path.exists(step_log_path):
+                with open(step_log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            step_logs.append(json.loads(line))
+            if os.path.exists(trajectory_log_path):
+                with open(trajectory_log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            traj = json.loads(line)
+                            trajectory_logs.append(traj)
+                            eval_results.append(SimpleNamespace(
+                                status=traj["final_status"],
+                                passed=(traj["final_status"] == "PASS"),
+                                exec_ok=(traj["final_status"] not in ("TOKEN_OVERFLOW",)),
+                                test_pass=(traj["final_status"] == "PASS"),
+                                tests_passed=traj.get("final_tests_passed", 0),
+                                tests_total=traj.get("final_tests_total", 0),
+                                error_type=None, error_stage=None,
+                                num_calls=traj.get("call_count", 1),
+                            ))
+        # ─────────────────────────────────────────────────────────────
+
         samples_to_run = min(num_samples, len(task))
 
         for i in range(samples_to_run):
@@ -321,6 +376,10 @@ def run_code_then_plan_repair(config_path: str):
             trajectory_id = f"{problem_id}_run0"
 
             print(f"\n--- [{i + 1}/{samples_to_run}] {problem_id} ---")
+
+            if problem_id in completed_ids:
+                print(f"  ⏭️ SKIP (체크포인트)")
+                continue
 
             cumulative_input_tokens = 0
             cumulative_output_tokens = 0
@@ -1148,7 +1207,15 @@ def run_code_then_plan_repair(config_path: str):
 
             trajectory_logs.append(trajectory_entry)
 
-            # [FIX] del final_exec_result 추가 (code_then_plan.py와 동일하게 메모리 해제)
+            # ── CHECKPOINT: 즉시 flush ────────────────────────────────
+            if save_step_level:
+                for s in step_logs:
+                    if s.get("trajectory_id") == trajectory_id and s.get("problem_id") == problem_id:
+                        _append_jsonl(step_log_path, s)
+            if save_trajectory_level:
+                _append_jsonl(trajectory_log_path, trajectory_entry)
+            # ─────────────────────────────────────────────────────────
+
             del final_exec_result
             gc.collect()
 
@@ -1356,11 +1423,7 @@ def run_code_then_plan_repair(config_path: str):
             "failure_family_counts": failure_family_counts,
         }
 
-        if save_step_level:
-            save_results_jsonl(step_logs, os.path.join(output_dir, "step_logs.jsonl"))
-
-        if save_trajectory_level:
-            save_results_jsonl(trajectory_logs, os.path.join(output_dir, "trajectory_logs.jsonl"))
+        # step/trajectory는 이미 체크포인트로 flush됨
 
         if save_problem_summary:
             save_result(problem_summary, os.path.join(output_dir, "summary.json"))
